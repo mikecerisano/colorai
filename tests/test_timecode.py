@@ -14,6 +14,7 @@ from colorai.core.timecode import (
     format_seconds,
     frame_to_seconds,
     frames_to_timecode,
+    is_drop_frame,
     parse_timecode,
     seconds_to_frame,
     seconds_to_timecode,
@@ -200,6 +201,23 @@ def test_explicit_drop_frame_override():
 def test_negative_frame_raises():
     with pytest.raises(ValueError):
         frames_to_timecode(-1, 24.0)
+
+
+@pytest.mark.parametrize(
+    "fps,expected",
+    [
+        (23.976, False),
+        (24.0, False),
+        (25.0, False),
+        (29.97, True),
+        (30.0, False),
+        (50.0, False),
+        (59.94, True),
+        (60.0, False),
+    ],
+)
+def test_is_drop_frame(fps, expected):
+    assert is_drop_frame(fps) is expected
 
 
 @pytest.mark.parametrize(

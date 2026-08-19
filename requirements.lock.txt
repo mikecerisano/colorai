@@ -31,6 +31,7 @@ PyYAML==6.0.3
 rich==15.0.0
 scenedetect==0.7.1
 scipy==1.18.0
+SQLAlchemy==2.0.52
 starlette==1.6.0
 tqdm==4.70.0
 typing-inspection==0.4.4

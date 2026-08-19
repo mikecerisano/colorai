@@ -77,6 +77,15 @@ def _is_drop_frame(fps: float) -> bool:
     return r in (30, 60) and abs(fps - r) > 1e-6
 
 
+def is_drop_frame(fps: float) -> bool:
+    """Public form of :func:`_is_drop_frame`.
+
+    True when ``fps`` denotes an NTSC fractional rate (29.97 / 59.94) whose
+    timecode uses drop-frame numbering.
+    """
+    return _is_drop_frame(fps)
+
+
 def frames_to_timecode(frame: int, fps: float, drop_frame: bool | None = None) -> str:
     """Convert a zero-based absolute frame index to SMPTE timecode.
 
