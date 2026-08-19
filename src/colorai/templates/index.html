@@ -58,6 +58,9 @@
     .org-cluster { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0.7rem; margin-bottom:0.85rem; }
     .org-judgment { display:flex; gap:0.8rem; align-items:flex-start; background:var(--panel2); border:1px solid #6b5626; border-radius:8px; padding:0.7rem; margin-bottom:0.6rem; }
     .org-judgment img { width:200px; max-width:40%; border-radius:6px; border:1px solid var(--line); background:#000; }
+    .intentional-card { min-width:220px; }
+    .intentional-card .meta { display:flex; flex-direction:column; gap:0.35rem; }
+    .sidebar-status { width:100%; text-align:left; margin:0.2rem 0; }
     .org-check { display:flex; gap:0.35rem; align-items:center; padding:0.35rem 0.55rem; font-size:0.72rem; color:var(--muted); cursor:pointer; }
     .sug { display:flex; align-items:flex-start; gap:0.7rem; padding:0.5rem; border:1px solid var(--line); border-radius:8px; margin-bottom:0.5rem; background:var(--panel2); }
     .sug img { height:96px; border:1px solid var(--line); border-radius:4px; background:#000; }
@@ -115,11 +118,18 @@
         <button type="button" onclick="createSetup()">Create</button>
       </div>
 
-      <h2>Unassigned</h2>
-      <div>
-        <span class="badge unassigned">{{ ws.unassigned_faces|length }} faces</span>
-        <span class="badge unassigned">{{ ws.unassigned_shots|length }} shots</span>
-      </div>
+      {% set org = ws.organization %}
+      <h2>Organization</h2>
+      <button type="button" class="sidebar-status" onclick="showOrganizationSection('tab-inbox-pane')">
+        <span class="badge unassigned">Unassigned ({{ org.queue_shot_ids|length }})</span>
+      </button>
+      <button type="button" class="sidebar-status" onclick="showOrganizationSection('intentional-shots')">
+        <span class="badge intentional">Intentional ({{ org.dismissed_shots|length }})</span>
+      </button>
+      <button type="button" class="sidebar-status" onclick="showOrganizationSection('broll-pile')">
+        <span class="badge">B-roll ({{ org.broll_pile|length }})</span>
+      </button>
+      <div class="muted" style="margin-top:0.35rem">{{ ws.unassigned_faces|length }} unassigned faces</div>
     </aside>
 
     <main class="main">
@@ -448,24 +458,32 @@
         {% endfor %}
 
         {% if org.dismissed_shots %}
-        <details class="ref-history" style="margin-top:1rem">
-          <summary class="muted">Dismissed / intentional ({{ org.dismissed_shots|length }})</summary>
+        <section id="intentional-shots" style="margin-top:1rem">
+          <h2>Dismissed / intentional ({{ org.dismissed_shots|length }})</h2>
+          <p class="muted">Kept out of automatic QC. Restore, reassign, or send to B-roll at any time.</p>
+          <div class="filmstrip">
           {% for s in org.dismissed_shots %}
-          <div class="row" style="margin-top:0.3rem">
-            <span class="badge intentional">intentional</span>
-            <span class="muted">shot {{ s.index }} · {{ s.start_tc }}</span>
+          <div class="shot-thumb intentional-card" data-shot="{{ s.id }}">
+            <img src="/shots/{{ s.id }}/preview.png" alt="intentional shot {{ s.index }}">
+            <div class="meta">
+            <span><span class="badge intentional">intentional</span> shot {{ s.index }} · {{ s.start_tc }}</span>
             <select id="dismissed-target-{{ s.id }}">
               <option value="">Assign to setup…</option>
               {% for g in ws.setups %}<option value="{{ g.id }}">{{ g.name }}{% if g.parent_id is not none %} · variant{% endif %}</option>{% endfor %}
             </select>
-            <button type="button" onclick="assignFromSelect({{ s.id }}, 'dismissed-target-{{ s.id }}')">Assign to setup</button>
-            <button type="button" onclick="dismissShots([{{ s.id }}], true)">Restore</button>
+            <div class="row">
+              <button type="button" onclick="assignFromSelect({{ s.id }}, 'dismissed-target-{{ s.id }}')">Move</button>
+              <button type="button" onclick="sendToBroll([{{ s.id }}])">Send to B-roll</button>
+              <button type="button" onclick="dismissShots([{{ s.id }}], true)">Restore</button>
+            </div>
+            </div>
           </div>
           {% endfor %}
-        </details>
+          </div>
+        </section>
         {% endif %}
 
-        <details class="ref-history" style="margin-top:1rem" {% if org.broll_pile %}open{% endif %}>
+        <details id="broll-pile" class="ref-history" style="margin-top:1rem" {% if org.broll_pile %}open{% endif %}>
           <summary class="muted">B-roll pile ({{ org.broll_pile|length }})</summary>
           {% if not org.broll_pile %}<p class="muted">Nothing parked here.</p>{% endif %}
           {% if org.broll_pile %}
@@ -521,6 +539,12 @@
         document.getElementById('tab-'+t).classList.toggle('active', t === name);
       });
       rememberView({tab: name});
+    }
+    function showOrganizationSection(id) {
+      showTab('inbox');
+      requestAnimationFrame(() => {
+        document.getElementById(id)?.scrollIntoView({behavior: 'smooth', block: 'start'});
+      });
     }
 
     function selectSetup(id) {

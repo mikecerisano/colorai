@@ -208,5 +208,27 @@ def test_needs_organization_html_buckets(tmp_path):
     assert "Send to B-roll" in body
     assert "B-roll pile" in body
     assert "Assign to setup" in body
+
+
+def test_sidebar_links_to_distinct_organization_destinations(tmp_path):
+    client, asset, shots, alice, bob = _org_client(tmp_path)
+    client.post(
+        f"/api/assets/{asset.id}/organize",
+        json={"action": "dismiss", "shot_ids": [shots[3].id]},
+    )
+    client.post(
+        f"/api/assets/{asset.id}/organize",
+        json={"action": "send_to_broll", "shot_ids": [shots[2].id]},
+    )
+
+    body = client.get("/").text
+    assert "Intentional (1)" in body
+    assert "B-roll (1)" in body
+    assert 'id="intentional-shots"' in body
+    assert 'id="broll-pile"' in body
+    assert "showOrganizationSection('intentional-shots')" in body
+    assert "showOrganizationSection('broll-pile')" in body
+    assert "intentional-card" in body
+    assert "Send to B-roll" in body
     # The raw timecode checklist is gone; the visual buckets replace it.
     assert "Unassigned shots" not in body
