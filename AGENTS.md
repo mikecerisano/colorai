@@ -95,4 +95,3 @@ docs/                architecture, status, audit, research notes
 - Content-aware representative-frame selection (currently the middle frame).
 - Full interactive approve/reject UX in the review UI (the correction JSON API
   and live preview exist; the HTML is still read-only).
-- Shot-to-shot color-outlier detection and candidate correction generation.

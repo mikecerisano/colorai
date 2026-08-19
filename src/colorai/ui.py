@@ -18,6 +18,7 @@ extra), not for running the server.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,13 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from colorai.correction import load_corrected_still, validate_correction
-from colorai.project.models import Correction, FrameMetrics, Project, Shot
+from colorai.project.models import (
+    Correction,
+    FrameMetrics,
+    MediaAsset,
+    Project,
+    Shot,
+)
 from colorai.project.store import ProjectStore
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -63,6 +70,16 @@ class CorrectionIn(BaseModel):
 class CorrectionUpdate(BaseModel):
     enabled: bool | None = None
     parameters: dict[str, Any] | None = None
+
+
+def _deviation_dict(d) -> dict[str, Any]:
+    return {
+        "shot_id": d.shot_id,
+        "luma_delta_stops": d.luma_delta_stops if math.isfinite(d.luma_delta_stops) else None,
+        "is_outlier": d.is_outlier,
+        "reasons": list(d.reasons),
+        "corrections": [{"kind": c.kind, "parameters": c.parameters} for c in d.corrections],
+    }
 
 
 def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
@@ -183,6 +200,35 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             if correction is None:
                 raise HTTPException(status_code=404, detail="correction not found")
             session.delete(correction)
+
+    # -- consistency analysis --------------------------------------------------
+
+    @app.get("/api/assets/{asset_id}/outliers")
+    def asset_outliers(asset_id: int, reference_shot_id: int | None = None):
+        from colorai.analysis import find_outliers
+
+        with store.session() as session:
+            if session.get(MediaAsset, asset_id) is None:
+                raise HTTPException(status_code=404, detail="asset not found")
+        try:
+            outliers = find_outliers(store, asset_id, reference_shot_id=reference_shot_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"outliers": [_deviation_dict(d) for d in outliers]}
+
+    @app.post("/api/assets/{asset_id}/apply-proposals", status_code=201)
+    def apply_proposals(asset_id: int, reference_shot_id: int | None = None):
+        from colorai.analysis import find_outliers, persist_proposals
+
+        with store.session() as session:
+            if session.get(MediaAsset, asset_id) is None:
+                raise HTTPException(status_code=404, detail="asset not found")
+        try:
+            outliers = find_outliers(store, asset_id, reference_shot_id=reference_shot_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        created = persist_proposals(store, outliers)
+        return {"created": [_correction_dict(c) for c in created]}
 
     # -- preview -------------------------------------------------------------
 
