@@ -330,7 +330,7 @@
       <!-- Needs organization -->
       <section id="tab-inbox-pane" class="hidden">
         {% set org = ws.organization %}
-        {% if not org.queue_shot_ids and not org.dismissed_shots %}<p class="muted">Nothing needs organization.</p>{% endif %}
+        {% if not org.queue_shot_ids and not org.dismissed_shots and not org.broll_pile %}<p class="muted">Nothing needs organization.</p>{% endif %}
 
         {% if org.queue_shot_ids %}
         <div class="org-bar row">
@@ -340,6 +340,7 @@
           </select>
           <button type="button" onclick="addSelectedToSetup()">Add selected to setup</button>
           <button type="button" onclick="createSetupFromSelected()">Make setup from selected</button>
+          <button type="button" onclick="sendSelectedToBroll()">Send selected to B-roll</button>
           <button type="button" onclick="dismissSelected()">Dismiss selected</button>
         </div>
         {% endif %}
@@ -372,6 +373,7 @@
               {% for g in ws.setups if g.parent_id is none %}<option value="{{ g.id }}">{{ g.name }}{% if g.camera %} ({{ g.camera }}){% endif %}</option>{% endfor %}
             </select>
             <button type="button" onclick="addClusterToSetup('{{ c.id }}')">Add to setup</button>
+            <button type="button" onclick="sendClusterToBroll('{{ c.id }}')">Send to B-roll</button>
             <button type="button" onclick="dismissCluster('{{ c.id }}')">Dismiss / keep unorganized</button>
           </div>
         </div>
@@ -387,6 +389,7 @@
             <div class="meta">
               shot {{ s.index }} · {{ s.start_tc }}
               <label class="org-check"><input type="checkbox" class="shot-select" value="{{ s.id }}" onchange="updateSelected()"> select</label>
+              <button type="button" onclick="sendToBroll([{{ s.id }}])">Send to B-roll</button>
               <button type="button" onclick="dismissShots([{{ s.id }}])">Mark intentional</button>
             </div>
           </div>
@@ -413,6 +416,7 @@
                 {% for g in ws.setups %}<option value="{{ g.id }}">{{ g.name }}{% if g.camera %} ({{ g.camera }}){% endif %}</option>{% endfor %}
               </select>
               <button type="button" onclick="assignFromSelect({{ j.shot_id }}, 'judgment-target-{{ j.shot_id }}')">Assign</button>
+              <button type="button" onclick="sendToBroll([{{ j.shot_id }}])">Send to B-roll</button>
               <button type="button" onclick="dismissShots([{{ j.shot_id }}])">Dismiss / keep unorganized</button>
             </div>
           </div>
@@ -431,6 +435,23 @@
           {% endfor %}
         </details>
         {% endif %}
+
+        <details class="ref-history" style="margin-top:1rem" {% if org.broll_pile %}open{% endif %}>
+          <summary class="muted">B-roll pile ({{ org.broll_pile|length }})</summary>
+          {% if not org.broll_pile %}<p class="muted">Nothing parked here.</p>{% endif %}
+          {% if org.broll_pile %}
+          <div class="filmstrip">
+            {% for s in org.broll_pile %}
+            <div class="shot-thumb" data-shot="{{ s.id }}">
+              <img src="/shots/{{ s.id }}/preview.png" alt="B-roll shot {{ s.index }}">
+              <div class="meta">shot {{ s.index }} · {{ s.start_tc }}<br>
+                <button type="button" onclick="restoreBroll([{{ s.id }}])">Restore to organization</button>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </details>
       </section>
     </main>
   </div>
@@ -571,6 +592,11 @@
       if (!ids.length) { alert('Select shots first'); return; }
       await organize('dismiss', {shot_ids: ids});
     }
+    async function sendSelectedToBroll() {
+      const ids = selectedShotIds();
+      if (!ids.length) { alert('Select shots first'); return; }
+      await organize('send_to_broll', {shot_ids: ids});
+    }
     function clusterMemberIds(cid) {
       const el = document.querySelector(`.org-cluster[data-cluster="${cid}"]`);
       return (el.dataset.memberIds || '').split(',').map(Number).filter(Boolean);
@@ -588,6 +614,15 @@
     }
     async function dismissCluster(cid) {
       await organize('dismiss', {shot_ids: clusterMemberIds(cid)});
+    }
+    async function sendClusterToBroll(cid) {
+      await organize('send_to_broll', {shot_ids: clusterMemberIds(cid)});
+    }
+    async function sendToBroll(ids) {
+      await organize('send_to_broll', {shot_ids: ids});
+    }
+    async function restoreBroll(ids) {
+      await organize('restore_broll', {shot_ids: ids});
     }
     async function dismissShots(ids, restore) {
       await organize(restore ? 'restore' : 'dismiss', {shot_ids: ids});

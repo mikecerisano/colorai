@@ -111,6 +111,8 @@ def match_subject_in_group(
             group = session.get(ShotGroup, group_id)
             if group is None or group.asset_id != asset_id:
                 return [], "group not found for this asset"
+            if group.kind not in (GROUP_KIND_SETUP, GROUP_KIND_VARIANT):
+                return [], "matching is only defined for interview setups or lighting variants"
             is_variant = group.kind == GROUP_KIND_VARIANT
             member_shot_ids &= {
                 s.id for s in session.query(Shot).filter_by(group_id=group_id).all()

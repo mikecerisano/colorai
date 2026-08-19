@@ -116,6 +116,23 @@ def test_group_scope_restricts_members():
     assert proposals[0].group_id == g.id
 
 
+def test_non_interview_group_cannot_be_matched():
+    store, asset, shots, alice, bob = _setup()
+    broll = create_group(store, asset.id, "B-roll", kind="generic")
+    assign_shot_group(store, shots[0].id, broll.id)
+    p = propose_reference(
+        store, asset_id=asset.id, shot_id=shots[0].id, reason="unrelated material",
+        confidence=0.8, subject_id=alice.id, group_id=broll.id,
+    )
+    approve_reference(store, p.id)
+
+    proposals, error = match_subject_in_group(
+        store, asset.id, subject_id=alice.id, group_id=broll.id
+    )
+    assert proposals == []
+    assert "interview setups or lighting variants" in error
+
+
 def test_skin_never_compared_across_subjects():
     store, asset, shots, alice, bob = _setup()
     set_reference(store, alice.id, shots[0].id)

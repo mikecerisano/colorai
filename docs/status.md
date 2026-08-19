@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 394 tests passing.
+Current progress. 396 tests passing.
 
 ## Done
 
@@ -152,13 +152,16 @@ Current progress. 394 tests passing.
   without a setup are classified (deterministically, from persisted face/
   subject evidence) into three buckets: *interview/setup candidates* (same-
   subject, temporally adjacent clusters with a suggested label and reason),
-  *b-roll / non-interview* (no detected faces — markable as intentional), and
+  *b-roll / non-interview* (no detected faces — sendable to a visible,
+  restorable B-roll pile or markable as intentional), and
   *needs judgment* (multi-person or weak/no identity evidence). Clusters
   offer "Create setup from this" / "Add to setup" / "Dismiss"; a manual batch
   bar stays available as a secondary path. Suggestions are read-only —
   nothing is auto-grouped, excused, or graded — and bulk actions go through
   `POST /api/assets/{id}/organize` (`create_setup` / `assign` / `dismiss` /
-  `restore`). See `colorai/organization.py`.
+  `restore` / `send_to_broll` / `restore_broll`). The B-roll pile is a generic
+  editorial group, deliberately excluded from setup matching. See
+  `colorai/organization.py`.
 - **Temporal QC** — `qc.py` detects frame-to-frame flicker, per-shot clipped
   highlights / crushed blacks (from stored luma percentiles), and blank /
   duplicate damaged-frame signatures; exposed via MCP. Reports carry
@@ -200,7 +203,7 @@ Current progress. 394 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 394 tests across timecode, project model, migrations (incl. legacy
+- 396 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
   auto-assignment), correction, LUT/curve, render, resumability, editorial,
   references, matching (incl. variants), analysis, face (incl. bbox), skin,

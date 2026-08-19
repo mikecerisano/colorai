@@ -128,6 +128,32 @@ def test_dismiss_and_restore_broll(tmp_path):
     assert shots[3].id in org["queue_shot_ids"]
 
 
+def test_send_to_broll_pile_and_restore(tmp_path):
+    client, asset, shots, alice, bob = _org_client(tmp_path)
+
+    r = client.post(
+        f"/api/assets/{asset.id}/organize",
+        json={"action": "send_to_broll", "shot_ids": [shots[3].id]},
+    )
+    assert r.status_code == 200
+    assert r.json()["action"] == "send_to_broll"
+
+    ws = _workspace(client, asset.id)
+    org = ws["organization"]
+    assert [s["id"] for s in org["broll_pile"]] == [shots[3].id]
+    assert shots[3].id not in org["queue_shot_ids"]
+    assert all(setup["name"] != "B-roll" for setup in ws["setups"])
+
+    r = client.post(
+        f"/api/assets/{asset.id}/organize",
+        json={"action": "restore_broll", "shot_ids": [shots[3].id]},
+    )
+    assert r.status_code == 200
+    org = _workspace(client, asset.id)["organization"]
+    assert org["broll_pile"] == []
+    assert shots[3].id in org["queue_shot_ids"]
+
+
 def test_workspace_does_not_move_existing_assignments(tmp_path):
     client, asset, shots, alice, bob = _org_client(tmp_path)
     setup = client.post(
@@ -156,5 +182,7 @@ def test_needs_organization_html_buckets(tmp_path):
     assert "Add to setup" in body
     assert "Dismiss / keep unorganized" in body
     assert "Mark intentional" in body
+    assert "Send to B-roll" in body
+    assert "B-roll pile" in body
     # The raw timecode checklist is gone; the visual buckets replace it.
     assert "Unassigned shots" not in body

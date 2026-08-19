@@ -48,6 +48,11 @@ from colorai.project.store import ProjectStore
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
+# This is an editorial destination, not an interview/matching scope.  Keeping
+# its name and kind fixed lets the UI find the pile without a schema flag.
+_BROLL_GROUP_NAME = "B-roll"
+_BROLL_GROUP_KIND = "generic"
+
 
 def _fmt(value: float | None) -> str:
     return "—" if value is None else f"{value:.3f}"
@@ -187,6 +192,14 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
         # group-less, non-excused queue (excused = dismissed / intentional).
         org_queue = [s for s in shots if s.group_id is None and not s.excused]
         dismissed = [s for s in shots if s.group_id is None and s.excused]
+        broll_group = next(
+            (
+                g for g in groups
+                if g.kind == _BROLL_GROUP_KIND and g.name == _BROLL_GROUP_NAME
+            ),
+            None,
+        )
+        broll_pile = [s for s in shots if broll_group is not None and s.group_id == broll_group.id]
         subject_names = {s.id: s.name for s in subjects}
         org_result = suggest_organization(
             [
@@ -230,6 +243,7 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                 for j in org_result.judgment
             ],
             "dismissed_shots": [briefs_by_id[s.id] for s in dismissed],
+            "broll_pile": [briefs_by_id[s.id] for s in broll_pile],
         }
 
         suggestion_rows = (
@@ -273,7 +287,9 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                         if active_by_group[g.id] is None or p["id"] != active_by_group[g.id]["id"]
                     ],
                 }
-                for g in groups
+                # Generic groups (including B-roll) are editorial bins, not
+                # interview setup workspaces or matching scopes.
+                for g in groups if g.kind in ("setup", "variant")
             ],
             "unassigned_faces": [
                 face_brief(m) for m in face_rows if m.subject_id is None
@@ -385,7 +401,9 @@ class GroupAssign(BaseModel):
 
 
 class OrganizeIn(BaseModel):
-    action: Literal["create_setup", "assign", "dismiss", "restore"]
+    action: Literal[
+        "create_setup", "assign", "dismiss", "restore", "send_to_broll", "restore_broll"
+    ]
     shot_ids: list[int]
     name: str | None = None
     group_id: int | None = None
@@ -615,8 +633,10 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
         ``create_setup`` builds a setup group named ``name`` and assigns the
         shots; ``assign`` adds shots to an existing group; ``dismiss`` marks
         shots as intentional non-setup material (``excused``); ``restore``
-        undoes that. Only the requested shots are touched — existing group
-        assignments elsewhere are never moved implicitly.
+        undoes that. ``send_to_broll`` adds shots to a visible, non-matching
+        B-roll pile; ``restore_broll`` returns those shots to the queue. Only
+        the requested shots are touched — existing assignments elsewhere are
+        never moved implicitly.
         """
         from colorai.editorial import assign_shot_group, create_group, set_excused
 
@@ -650,17 +670,56 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
                 if group is None or group.asset_id != asset_id:
                     raise HTTPException(status_code=400, detail="group not found for this asset")
                 group_id = group.id
+        elif payload.action == "send_to_broll":
+            with store.session() as session:
+                group = (
+                    session.query(ShotGroup)
+                    .filter_by(
+                        asset_id=asset_id, name=_BROLL_GROUP_NAME, kind=_BROLL_GROUP_KIND
+                    )
+                    .one_or_none()
+                )
+            group_id = (
+                group.id
+                if group is not None
+                else create_group(
+                    store, asset_id, _BROLL_GROUP_NAME, kind=_BROLL_GROUP_KIND
+                ).id
+            )
+        elif payload.action == "restore_broll":
+            with store.session() as session:
+                group = (
+                    session.query(ShotGroup)
+                    .filter_by(
+                        asset_id=asset_id, name=_BROLL_GROUP_NAME, kind=_BROLL_GROUP_KIND
+                    )
+                    .one_or_none()
+                )
+            group_id = group.id if group is not None else None
         else:
             group_id = None
 
         moved = 0
         for shot_id in shot_ids:
-            if payload.action in ("create_setup", "assign"):
+            if payload.action in ("create_setup", "assign", "send_to_broll"):
                 shot = assign_shot_group(store, shot_id, group_id)
+                if payload.action == "send_to_broll" and shot is not None:
+                    # B-roll is a visible bucket; it is not an outlier/QC exception.
+                    set_excused(store, shot_id, False)
             elif payload.action == "dismiss":
                 shot = set_excused(store, shot_id, True)
-            else:
+            elif payload.action == "restore":
                 shot = set_excused(store, shot_id, False)
+            else:  # restore_broll
+                with store.session() as session:
+                    shot_row = session.get(Shot, shot_id)
+                    if shot_row is None or shot_row.group_id != group_id:
+                        shot = None
+                    else:
+                        shot_row.group_id = None
+                        session.flush()
+                        session.refresh(shot_row)
+                        shot = shot_row
             if shot is not None:
                 moved += 1
         return {"action": payload.action, "shots": moved, "group_id": group_id}
