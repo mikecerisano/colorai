@@ -177,21 +177,12 @@ def apply_corrections(
 # Preview
 # ---------------------------------------------------------------------------
 
-def preview_correction(store: ProjectStore, shot: Shot, out_path: str | Path) -> Path:
-    """Render ``shot``'s representative still with its enabled corrections applied.
-
-    Loads the stored still (BGR), applies each enabled ``Correction`` in order
-    (RGB), and writes the result to ``out_path``. Non-destructive: the original
-    still is never overwritten.
-    """
+def load_corrected_still(store: ProjectStore, shot: Shot) -> np.ndarray:
+    """Return the shot's representative still (BGR uint8) with enabled corrections applied."""
     from colorai.project.models import RepresentativeFrame
 
     with store.session() as session:
-        rf = (
-            session.query(RepresentativeFrame)
-            .filter_by(shot_id=shot.id)
-            .first()
-        )
+        rf = session.query(RepresentativeFrame).filter_by(shot_id=shot.id).first()
         if rf is None or not rf.image_path:
             raise ValueError(f"shot {shot.id} has no representative frame")
         corrections = (
@@ -207,8 +198,15 @@ def preview_correction(store: ProjectStore, shot: Shot, out_path: str | Path) ->
         raise ValueError(f"cannot read still: {still_path!r}")
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     corrected = apply_corrections(rgb, corrections)  # uint8 RGB out for uint8 in
-    out_bgr = cv2.cvtColor(corrected, cv2.COLOR_RGB2BGR)
+    return cv2.cvtColor(corrected, cv2.COLOR_RGB2BGR)
 
+
+def preview_correction(store: ProjectStore, shot: Shot, out_path: str | Path) -> Path:
+    """Render ``shot``'s representative still with its enabled corrections applied.
+
+    Non-destructive: the original still is never overwritten.
+    """
+    out_bgr = load_corrected_still(store, shot)
     destination = Path(out_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(destination), out_bgr)

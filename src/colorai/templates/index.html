@@ -14,6 +14,9 @@
     .shot .tc { font-family: ui-monospace, monospace; color: #ccc; }
     .metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.15rem 0.5rem; margin-top: 0.4rem; font-size: 0.75rem; color: #aaa; }
     .metrics span { display: flex; justify-content: space-between; }
+    .corrections { margin-top: 0.35rem; display: flex; gap: 0.3rem; flex-wrap: wrap; }
+    .corr { font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 4px; background: #2c4a2c; color: #b6e3b6; }
+    .corr.off { background: #3a2c2c; color: #d0a0a0; }
   </style>
 </head>
 <body>
@@ -25,10 +28,21 @@
   <div class="shots">
   {% for s in shots %}
     <div class="shot">
-      <img src="{{ s.still_url }}" alt="shot {{ s.index }}">
+      {% if s.has_corrections %}
+        <img src="/shots/{{ s.id }}/preview.png" alt="shot {{ s.index }} corrected">
+      {% else %}
+        <img src="{{ s.still_url }}" alt="shot {{ s.index }}">
+      {% endif %}
       <div class="meta">
         <div class="tc">{{ s.start_tc }} → {{ s.end_tc }}</div>
         <div class="muted">shot {{ s.index }} · {{ s.frame_count }} frames</div>
+        {% if s.corrections %}
+        <div class="corrections">
+          {% for c in s.corrections %}
+            <span class="corr{% if not c.enabled %} off{% endif %}">{{ c.kind }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
         <div class="metrics">
           <span>Y <b>{{ s.luma_mean }}</b></span>
           <span>σ <b>{{ s.luma_std }}</b></span>

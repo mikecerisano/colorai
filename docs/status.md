@@ -1,6 +1,6 @@
 # Status
 
-Current progress as of the initial foundation pass. 132 tests passing.
+Current progress as of the initial foundation pass. 140 tests passing.
 
 ## Done
 
@@ -21,6 +21,8 @@ Current progress as of the initial foundation pass. 132 tests passing.
 - **Correction schema + deterministic transform** — `cdl`, `exposure`,
   `offset`, `rgb_balance`, `contrast`, `saturation`, `hue_rotate`, with
   validation and a non-destructive preview render.
+- **Correction review API** — JSON endpoints to add/toggle/delete corrections
+  and a live corrected preview endpoint, surfaced in the review UI.
 - **Skin segmentation experiment** — color-only YCrCb heuristic as a
   placeholder for coverage measurement.
 - **Docs** — `architecture.md`, `dependency-audit.md`, `research-notes.md`,
@@ -29,7 +31,7 @@ Current progress as of the initial foundation pass. 132 tests passing.
 ## Not yet done (next)
 
 - Alembic migrations (schema currently via `create_all`).
-- Wire `Correction` transforms into the review UI (approve/reject/render).
+- Full interactive approve/reject UX in the review UI (API + preview exist).
 - Real face/skin detection (replace the color heuristic with a local model).
 - Content-aware representative-frame selection (currently middle frame).
 - Shot-to-shot color-outlier detection and candidate correction generation.
@@ -41,5 +43,5 @@ Current progress as of the initial foundation pass. 132 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 132 tests across timecode, project model, ingest, shot detection, frames,
+- 140 tests across timecode, project model, ingest, shot detection, frames,
   metrics, pipeline, correction, skin, UI, and CLI.
