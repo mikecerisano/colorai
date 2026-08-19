@@ -105,12 +105,15 @@ def _migrate(path: Path) -> None:
 def _bootstrap_legacy(path: Path, cfg: object) -> None:
     """Stamp a legacy (pre-Alembic) database at its matching revision.
 
-    Never drops or rewrites data: it only reads the schema, stamps the
-    ``alembic_version`` table, and lets the normal upgrade path apply whatever
-    is genuinely missing.
+    A legacy database is one with populated tables but no *current* version:
+    either no ``alembic_version`` table at all, or an empty one left behind by
+    a failed migration attempt (which Alembic would misread as a blank
+    database). We only read the schema, stamp the version table, and let the
+    normal upgrade path apply whatever is genuinely missing. Never drops or
+    rewrites data.
     """
     from alembic import command
-    from sqlalchemy import create_engine, inspect
+    from sqlalchemy import create_engine, inspect, text
 
     if not path.exists() or path.stat().st_size == 0:
         return
@@ -119,9 +122,19 @@ def _bootstrap_legacy(path: Path, cfg: object) -> None:
     try:
         inspector = inspect(engine)
         tables = set(inspector.get_table_names())
-        if "alembic_version" in tables or not tables:
-            return  # already managed, or a fresh empty file
+        if not tables:
+            return  # fresh empty file; upgrade head creates everything
 
+        version_rows = 0
+        if "alembic_version" in tables:
+            with engine.connect() as conn:
+                version_rows = conn.execute(
+                    text("SELECT COUNT(*) FROM alembic_version")
+                ).scalar()
+        if version_rows > 0:
+            return  # already managed; upgrade head applies pending revisions
+
+        # Legacy: unversioned, or an empty version table from a failed run.
         chain = _legacy_chain(inspector)
         if not chain[0][1]:
             raise RuntimeError(

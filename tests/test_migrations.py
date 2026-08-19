@@ -138,3 +138,57 @@ def test_open_legacy_db_at_older_revision_migrates_forward(tmp_path, monkeypatch
     assert "review_status" in {c["name"] for c in inspector.get_columns("shots")}
     assert "source_hash" in {c["name"] for c in inspector.get_columns("media_assets")}
     engine3.dispose()
+
+
+def test_open_legacy_db_with_empty_version_table(tmp_path):
+    """A populated legacy database whose failed migration attempt left an
+    *empty* ``alembic_version`` table must be treated as unversioned: stamped
+    at the recognized revision and upgraded — never table-recreated.
+
+    Regression: Alembic treats an empty version table as a blank database and
+    tries the initial migration again ("table projects already exists").
+    """
+    from colorai.project import ProjectStore
+
+    db = tmp_path / "legacy_empty_version.sqlite3"
+    engine = create_engine(f"sqlite+pysqlite:///{db}")
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO projects (name, created_at, updated_at) "
+                "VALUES ('legacy', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO media_assets (project_id, source_path, frame_rate, "
+                "timecode_format, status, created_at, updated_at) VALUES "
+                "(1, '/media/m.mov', 25.0, 'NDF', 'analyzed', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            )
+        )
+        # The leftover from a failed migration attempt: an empty version table.
+        conn.execute(
+            text(
+                "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL, "
+                "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+            )
+        )
+    engine.dispose()
+
+    store = ProjectStore.open(db)
+    assert store.list_projects()[0].name == "legacy"
+    with store.session() as session:
+        from colorai.project.models import MediaAsset
+
+        assert session.query(MediaAsset).first().source_path == "/media/m.mov"
+
+    # The version table is now stamped (exactly one row), not blank.
+    engine2 = create_engine(f"sqlite+pysqlite:///{db}")
+    with engine2.connect() as conn:
+        rows = conn.execute(text("SELECT COUNT(*) FROM alembic_version")).scalar()
+    assert rows == 1
+    engine2.dispose()
+
+    # Re-opening is still a no-op with data intact.
+    assert ProjectStore.open(db).list_projects()[0].name == "legacy"

@@ -118,7 +118,7 @@ record reasoning.
 .venv/bin/python -m pytest
 ```
 
-346 tests, including exhaustive SMPTE drop-frame round-trips, real
+348 tests, including exhaustive SMPTE drop-frame round-trips, real
 ffmpeg-encoded fixtures, and end-to-end pipeline + MCP checks. Tests that need
 `ffmpeg` skip automatically when it's absent.
 

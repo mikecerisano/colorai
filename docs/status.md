@@ -85,8 +85,11 @@ Current progress. 344 tests passing.
   `merge_shots` that preserve corrections and reset the asset for a re-derive.
   Exposed via UI, API, and MCP; the outlier detector skips excused shots.
 - **Legacy database bootstrap** — pre-Alembic databases (populated tables, no
-  ``alembic_version``) are recognized by marker tables/columns, stamped at the
-  matching revision, and migrated forward; data is never dropped or rewritten.
+  ``alembic_version`` row — including one with an *empty* version table left
+  by a failed migration attempt) are recognized by marker tables/columns,
+  stamped at the matching revision, and migrated forward; data is never
+  dropped or rewritten. Verified through a real ``colorai mcp`` stdio smoke
+  test, not only direct store tests.
 - **Auto-subject assignment** — ``analyze`` now runs identity-based
   ``auto_assign_subjects`` on fresh analyses; runs skip it when any face is
   already assigned, so manual/agent regroupings survive resumable re-analysis.
