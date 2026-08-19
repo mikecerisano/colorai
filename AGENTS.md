@@ -48,8 +48,11 @@ src/colorai/
   qc.py              flicker / clipping / blank-frame temporal QC
   color.py           BT.709 <-> linear transfer + working-space handling
   correction.py      deterministic correction transforms + preview
+  lutcube.py         .cube LUT parsing + interpolation
   render.py          full-master export (apply approved corrections)
   editorial.py       review state, exceptions, grouping, split/merge
+  references.py      human-approved reference proposals
+  matching.py        group-aware subject/setup matching
   face.py            YuNet detection + SFace identity + skin sampling
   skin.py            color-only skin heuristic (experiment)
   restoration.py     deterministic recovery + generative boundary
@@ -105,6 +108,8 @@ docs/                architecture, status, audit, research notes
 
 ## Current gaps (do not assume they exist)
 
+- Automatic visual camera-angle inference — intentionally not implemented;
+  setup/camera labels are human/agent-assigned (by design).
 - Bundle the generative model files themselves (RIFE + LaMa ONNX). The loader
   and status surface are wired (`generative.py`); the models are not committed
   (large, gitignored) — see `docs/research-notes.md` for acquisition.

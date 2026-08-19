@@ -25,9 +25,17 @@ display-referred perceptual op.
   frames to a new master (the same deterministic transforms the preview shows).
 - **Resumable + editable** — re-analysis is cached by source identity; manual
   split/merge, review/approval state, intentional-exception flags, and
-  scene/camera-family grouping all survive a re-run.
-- **Temporal QC** — flicker, clipped highlights, crushed blacks, and blank /
-  duplicate damaged-frame signatures, alongside blur-pulse detection.
+  scene/camera-family grouping all survive a re-run. Pre-Alembic project
+  databases open safely and migrate in place.
+- **Interview/setup-aware matching** — the matching unit is *subject × setup
+  family × camera angle* (labels assigned by a human or vision agent, never
+  inferred from pixels). An agent proposes reference shots with reasons and
+  confidence; a human must approve before group-scoped match proposals appear.
+  Proposals are deterministic, disabled, and carry their reference + group
+  context. Global median matching stays an explicit diagnostic, not a default.
+- **Temporal QC** — flicker, highlight/shadow measurements, and blank /
+  duplicate damaged-frame signatures, alongside blur-pulse detection — all
+  reported as *evidence, not defects* for comparing similar shots.
 - **Agent-ready (MCP)** — `colorai mcp` exposes the whole engine (including
   real image frames) to Claude Code / Codex / ChatGPT, with agent reasoning
   persisted as reviewable notes.
@@ -107,7 +115,7 @@ record reasoning.
 .venv/bin/python -m pytest
 ```
 
-315 tests, including exhaustive SMPTE drop-frame round-trips, real
+337 tests, including exhaustive SMPTE drop-frame round-trips, real
 ffmpeg-encoded fixtures, and end-to-end pipeline + MCP checks. Tests that need
 `ffmpeg` skip automatically when it's absent.
 

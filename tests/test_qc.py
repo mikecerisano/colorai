@@ -59,8 +59,12 @@ def test_shot_clip_report(tmp_path):
         session.commit()
 
     report = shot_clip_report(store, asset.id)
-    assert report[0] == {"shot_id": shots[0].id, "luma_p5": 0.01, "luma_p95": 0.99, "clipped": True, "crushed": True}
+    assert report[0]["shot_id"] == shots[0].id
+    assert report[0]["clipped"] is True
+    assert report[0]["crushed"] is True
+    assert "measurement, not a defect" in report[0]["note"]
     assert report[1]["clipped"] is False and report[1]["crushed"] is False
+    assert report[1]["note"] == ""
 
 
 def test_blank_frames_from_lumas():

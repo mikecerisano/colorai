@@ -187,6 +187,13 @@ def test_mcp_server_lists_tools():
     assert "detect_flicker" in names
     assert "shot_clip_report" in names
     assert "detect_blank_frames" in names
+    assert "propose_reference" in names
+    assert "approve_reference" in names
+    assert "reject_reference" in names
+    assert "list_reference_proposals" in names
+    assert "match_subject_setup" in names
+    assert "matching_workspace" in names
+    assert "update_shot_group" in names
 
 
 def test_editorial_review_and_group_tools(tmp_path):
@@ -234,3 +241,96 @@ def test_split_and_merge_tools(tmp_path):
 
     merged = mcp_server.merge_shots(db, first["id"], second["id"])
     assert (merged["start_frame"], merged["end_frame"]) == (0, 24)
+
+
+def test_group_kind_and_camera_tools(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+
+    g = mcp_server.create_shot_group(db, asset.id, "interview A", kind="setup", camera="A")
+    assert (g["kind"], g["camera"]) == ("setup", "A")
+
+    groups = mcp_server.list_shot_groups(db, asset.id)
+    assert groups[0]["kind"] == "setup"
+
+    updated = mcp_server.update_shot_group(db, g["id"], camera="B", name="interview B")
+    assert updated["camera"] == "B"
+    assert updated["name"] == "interview B"
+
+
+def _matching_store(tmp_path):
+    from colorai.project import FrameMetrics
+
+    db = tmp_path / "matching.sqlite3"
+    store = ProjectStore.create(db)
+    project = store.create_project("match")
+    asset = store.add_asset(project.id, source_path="/media/m.mov", frame_rate=25.0)
+    shots = make_shots(asset, [(0, 24), (25, 49), (50, 74)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        for s in shots:
+            session.refresh(s)
+    alice = create_subject(store, asset.id, "Alice")
+    with store.session() as session:
+        for face_index, (shot, b, g, r) in enumerate([
+            (shots[0], 0.35, 0.38, 0.58),
+            (shots[1], 0.35, 0.38, 0.29),
+        ]):
+            session.add(
+                SkinMetric(
+                    shot_id=shot.id, face_index=face_index,
+                    mean_b=b, mean_g=g, mean_r=r, sample_pixels=100, subject_id=alice.id,
+                )
+            )
+        for shot, luma in ((shots[0], 0.5), (shots[1], 0.25)):
+            session.add(
+                FrameMetrics(
+                    shot_id=shot.id, frame_index=shot.start_frame,
+                    luma_mean=luma, luma_std=0.1, r_mean=luma, g_mean=luma, b_mean=luma,
+                    saturation_mean=0.1,
+                )
+            )
+        session.commit()
+    return str(db), asset, shots, alice
+
+
+def test_reference_lifecycle_and_matching_tools(tmp_path):
+    db, asset, shots, alice = _matching_store(tmp_path)
+
+    # No reference yet -> matching refuses with an explanation.
+    blocked = mcp_server.match_subject_setup(db, asset.id, alice.id)
+    assert blocked["proposals"] == []
+    assert "approved reference" in blocked["error"]
+
+    proposal = mcp_server.propose_reference(
+        db, asset.id, shots[0].id, "well-lit, stable framing", 0.9, subject_id=alice.id
+    )
+    assert proposal["state"] == "suggested"
+    assert mcp_server.list_reference_proposals(db, asset.id)[0]["reason"].startswith("well-lit")
+
+    assert mcp_server.approve_reference(db, proposal["id"])["state"] == "approved"
+
+    result = mcp_server.match_subject_setup(db, asset.id, alice.id, persist=True)
+    assert result["reference_shot_id"] == shots[0].id
+    assert result["proposals"]
+    assert result["proposals"][0]["shot_id"] == shots[1].id
+
+    # Persisted proposals are disabled (never auto-applied).
+    with ProjectStore.open(db).session() as session:
+        from colorai.project.models import Correction
+
+        rows = session.query(Correction).filter_by(shot_id=shots[1].id).all()
+    assert rows and all(not c.enabled for c in rows)
+
+
+def test_matching_workspace_tool(tmp_path):
+    db, asset, shots, alice = _matching_store(tmp_path)
+    g = mcp_server.create_shot_group(db, asset.id, "setup 1", kind="setup", camera="A")
+    mcp_server.assign_shot_group(db, shots[1].id, g["id"])
+
+    ws = mcp_server.matching_workspace(db, asset.id)
+    assert ws["asset_id"] == asset.id
+    assert ws["subjects"][0]["name"] == "Alice"
+    assert ws["groups"][0]["camera"] == "A"
+    assert [s["id"] for s in ws["groups"][0]["member_shots"]] == [shots[1].id]
+    assert ws["reference_proposals"] == []

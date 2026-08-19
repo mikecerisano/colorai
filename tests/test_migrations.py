@@ -7,7 +7,9 @@ from pathlib import Path
 import colorai
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
+
+from colorai.project.models import Base
 
 
 def _alembic_config(db_path: Path) -> tuple[Config, str]:
@@ -59,3 +61,80 @@ def test_db_migrate_cli(tmp_path):
     names = set(inspect(create_engine(f"sqlite+pysqlite:///{db}")).get_table_names())
     assert "shots" in names
     assert "corrections" in names
+
+
+def test_open_legacy_db_stamps_and_preserves_data(tmp_path):
+    """A pre-Alembic database (full schema, populated, no version table) opens
+    without table-creation errors and keeps its data."""
+    from colorai.project import ProjectStore
+
+    db = tmp_path / "legacy.sqlite3"
+    engine = create_engine(f"sqlite+pysqlite:///{db}")
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO projects (name, created_at, updated_at) "
+                "VALUES ('legacy', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO media_assets (project_id, source_path, frame_rate, "
+                "timecode_format, status, created_at, updated_at) VALUES "
+                "(1, '/media/m.mov', 25.0, 'NDF', 'analyzed', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            )
+        )
+    engine.dispose()
+
+    store = ProjectStore.open(db)
+    assert store.list_projects()[0].name == "legacy"
+    with store.session() as session:
+        from colorai.project.models import MediaAsset
+
+        assert session.query(MediaAsset).first().source_path == "/media/m.mov"
+
+    engine2 = create_engine(f"sqlite+pysqlite:///{db}")
+    assert inspect(engine2).has_table("alembic_version")
+    engine2.dispose()
+
+    # Re-opening is a no-op and still preserves data.
+    assert ProjectStore.open(db).list_projects()[0].name == "legacy"
+
+
+def test_open_legacy_db_at_older_revision_migrates_forward(tmp_path, monkeypatch):
+    """A legacy database at an older schema revision is stamped at that
+    revision and upgraded forward, without losing its data."""
+    from colorai.project import ProjectStore
+
+    db = tmp_path / "old_legacy.sqlite3"
+    cfg, url = _alembic_config(db)
+    monkeypatch.setenv("COLORAI_DB_URL", url)
+
+    # Schema as of the subjects revision (before notes/source-hash/editorial).
+    command.upgrade(cfg, "b494e149e8b0")
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO projects (name, created_at, updated_at) "
+                "VALUES ('old', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            )
+        )
+    engine.dispose()
+
+    # Strip the version stamp to simulate a pre-Alembic database.
+    engine2 = create_engine(url)
+    with engine2.begin() as conn:
+        conn.execute(text("DROP TABLE alembic_version"))
+    engine2.dispose()
+
+    store = ProjectStore.open(db)
+    assert store.list_projects()[0].name == "old"
+
+    engine3 = create_engine(url)
+    inspector = inspect(engine3)
+    assert inspector.has_table("reference_proposals")
+    assert "review_status" in {c["name"] for c in inspector.get_columns("shots")}
+    assert "source_hash" in {c["name"] for c in inspector.get_columns("media_assets")}
+    engine3.dispose()

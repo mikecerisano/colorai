@@ -163,6 +163,11 @@ class ShotGroup(Base):
     Lets the reviewer cluster shots that share a scene or a camera setup (e.g.
     "interview cam A"), independent of the automatic shot detection and the
     per-person ``Subject`` grouping.
+
+    ``kind`` is ``"setup"`` for an interview/setup family (the unit for
+    group-aware matching) or ``"generic"`` for any other grouping. ``camera``
+    is an optional angle label ("A", "wide", "closeup", ...) assigned by the
+    human/agent — never inferred from pixels.
     """
 
     __tablename__ = "shot_groups"
@@ -172,6 +177,8 @@ class ShotGroup(Base):
         ForeignKey("media_assets.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="generic")
+    camera: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     asset: Mapped[MediaAsset] = relationship()
@@ -329,6 +336,48 @@ class Note(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
+class ReferenceProposal(Base):
+    """A human-approvable reference-shot proposal for a matching scope.
+
+    A vision agent proposes a hero shot for a subject and/or setup group with
+    a reason and confidence; the proposal stays ``suggested`` until a human
+    explicitly approves or rejects it. An ``approved`` proposal is the
+    effective reference for group-aware matching in that scope.
+
+    State machine: ``suggested`` -> ``approved`` | ``rejected`` (no automatic
+    transitions). Nothing else is applied from a proposal.
+    """
+
+    __tablename__ = "reference_proposals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("media_assets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    subject_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
+    )
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shot_groups.id", ondelete="SET NULL"), nullable=True
+    )
+    shot_id: Mapped[int] = mapped_column(
+        ForeignKey("shots.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    author: Mapped[str] = mapped_column(String(64), nullable=False, default="agent")
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="suggested")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+    asset: Mapped[MediaAsset] = relationship()
+    subject: Mapped["Subject | None"] = relationship()
+    group: Mapped["ShotGroup | None"] = relationship()
+    shot: Mapped[Shot] = relationship()
+
+
 # Silence unused-import lint for re-exported names.
 __all__ = [
     "Base",
@@ -342,5 +391,6 @@ __all__ = [
     "SkinMetric",
     "Subject",
     "Note",
+    "ReferenceProposal",
     "utcnow",
 ]

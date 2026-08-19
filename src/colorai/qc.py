@@ -84,7 +84,14 @@ def clip_flags(
 def shot_clip_report(
     store: ProjectStore, asset_id: int, *, clip: float = 0.98, crush: float = 0.02
 ) -> list[dict]:
-    """Per-shot clipping/crush report from stored ``FrameMetrics``."""
+    """Per-shot highlight/shadow report from stored ``FrameMetrics``.
+
+    These are **measurements, not defects**: bright windows, practicals,
+    speculars, dark furniture, wardrobe, and stylized contrast are normal in
+    a nearly finished Rec.709 master. Each row carries an interpretation note
+    so agents use the signal as evidence when comparing otherwise similar
+    shots, not as an automatic "fix" trigger.
+    """
     out: list[dict] = []
     with store.session() as session:
         shots = (
@@ -94,13 +101,26 @@ def shot_clip_report(
             m = session.query(FrameMetrics).filter_by(shot_id=shot.id).first()
             if m is None or m.luma_p5 is None or m.luma_p95 is None:
                 continue
+            clipped = m.luma_p95 >= clip
+            crushed = m.luma_p5 <= crush
+            notes = []
+            if clipped:
+                notes.append(
+                    "bright content near the ceiling (windows/practicals/speculars) — "
+                    "a measurement, not a defect"
+                )
+            if crushed:
+                notes.append(
+                    "deep shadows near black — a measurement, not a defect"
+                )
             out.append(
                 {
                     "shot_id": shot.id,
                     "luma_p5": round(m.luma_p5, 4),
                     "luma_p95": round(m.luma_p95, 4),
-                    "clipped": m.luma_p95 >= clip,
-                    "crushed": m.luma_p5 <= crush,
+                    "clipped": clipped,
+                    "crushed": crushed,
+                    "note": "; ".join(notes),
                 }
             )
     return out

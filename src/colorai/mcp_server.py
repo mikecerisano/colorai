@@ -296,7 +296,12 @@ def detect_flicker(project: str, shot_id: int, samples: int = 24) -> list[dict]:
 
 @mcp.tool()
 def shot_clip_report(project: str, asset_id: int) -> list[dict]:
-    """Per-shot clipped-highlights / crushed-blacks report."""
+    """Per-shot highlight/shadow measurements (evidence, not defects).
+
+    Bright windows/practicals/speculars and deep shadows are normal in a
+    nearly finished master; use these signals to compare similar shots, not
+    to trigger automatic fixes.
+    """
     from colorai.qc import shot_clip_report as _report
 
     return _report(_open(project), asset_id)
@@ -536,20 +541,48 @@ def merge_shots(project: str, shot_id_a: int, shot_id_b: int) -> dict:
 
 
 @mcp.tool()
-def create_shot_group(project: str, asset_id: int, name: str) -> dict:
-    """Create a scene/camera-family group for an asset."""
+def create_shot_group(
+    project: str, asset_id: int, name: str, kind: str = "generic", camera: str | None = None
+) -> dict:
+    """Create a scene/camera-family or interview/setup group for an asset.
+
+    ``kind="setup"`` marks an interview/setup family (the matching unit);
+    ``camera`` is an optional human-assigned angle label ("A", "wide", ...).
+    """
     from colorai.editorial import create_group as _create
 
-    g = _create(_open(project), asset_id, name)
-    return {"id": g.id, "name": g.name}
+    g = _create(_open(project), asset_id, name, kind=kind, camera=camera)
+    return {"id": g.id, "name": g.name, "kind": g.kind, "camera": g.camera}
 
 
 @mcp.tool()
 def list_shot_groups(project: str, asset_id: int) -> list[dict]:
-    """List shot groups (scene/camera families) for an asset."""
+    """List shot groups (scene/camera families / setups) for an asset."""
     from colorai.editorial import list_groups as _list
 
-    return [{"id": g.id, "name": g.name} for g in _list(_open(project), asset_id)]
+    return [
+        {"id": g.id, "name": g.name, "kind": g.kind, "camera": g.camera}
+        for g in _list(_open(project), asset_id)
+    ]
+
+
+@mcp.tool()
+def update_shot_group(
+    project: str,
+    group_id: int,
+    name: str | None = None,
+    camera: str | None = None,
+    kind: str | None = None,
+) -> dict:
+    """Update a group's name, camera label, and/or kind."""
+    from colorai.editorial import update_group as _update
+
+    g = _update(_open(project), group_id, name=name, camera=camera, kind=kind)
+    return (
+        {"id": g.id, "name": g.name, "kind": g.kind, "camera": g.camera}
+        if g
+        else {"error": "group not found"}
+    )
 
 
 @mcp.tool()
@@ -580,6 +613,227 @@ def unassign_shot_group(project: str, shot_id: int) -> str:
     from colorai.editorial import unassign_shot_group as _unassign
 
     return "ok" if _unassign(_open(project), shot_id) else "not found"
+
+
+# ---------------------------------------------------------------------------
+# Reference proposals (human-approved) + group-aware matching
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def propose_reference(
+    project: str,
+    asset_id: int,
+    shot_id: int,
+    reason: str,
+    confidence: float,
+    subject_id: int | None = None,
+    group_id: int | None = None,
+    author: str = "agent",
+) -> dict:
+    """Propose a reference (hero) shot for a subject and/or setup group.
+
+    Stays ``suggested`` until a human approves or rejects it. ``reason``
+    should address framing/lighting, skin visibility, exposure stability, and
+    fit with the intended setup — not clipping/crush thresholds.
+    """
+    from colorai.references import propose_reference as _propose
+
+    p = _propose(
+        _open(project),
+        asset_id=asset_id,
+        shot_id=shot_id,
+        reason=reason,
+        confidence=confidence,
+        subject_id=subject_id,
+        group_id=group_id,
+        author=author,
+    )
+    return {"id": p.id, "state": p.state, "shot_id": p.shot_id, "subject_id": p.subject_id, "group_id": p.group_id}
+
+
+@mcp.tool()
+def list_reference_proposals(project: str, asset_id: int) -> list[dict]:
+    """List reference proposals (suggested/approved/rejected) for an asset."""
+    from colorai.references import list_reference_proposals as _list
+
+    return [
+        {
+            "id": p.id,
+            "subject_id": p.subject_id,
+            "group_id": p.group_id,
+            "shot_id": p.shot_id,
+            "author": p.author,
+            "reason": p.reason,
+            "confidence": p.confidence,
+            "state": p.state,
+        }
+        for p in _list(_open(project), asset_id)
+    ]
+
+
+@mcp.tool()
+def approve_reference(project: str, proposal_id: int) -> dict:
+    """Human approval of a reference proposal (makes it the effective reference)."""
+    from colorai.references import approve_reference as _approve
+
+    p = _approve(_open(project), proposal_id)
+    return {"id": p.id, "state": p.state} if p else {"error": "proposal not found"}
+
+
+@mcp.tool()
+def reject_reference(project: str, proposal_id: int) -> dict:
+    from colorai.references import reject_reference as _reject
+
+    p = _reject(_open(project), proposal_id)
+    return {"id": p.id, "state": p.state} if p else {"error": "proposal not found"}
+
+
+@mcp.tool()
+def match_subject_setup(
+    project: str, asset_id: int, subject_id: int, group_id: int | None = None, persist: bool = False
+) -> dict:
+    """Compare a subject's shots to an approved reference within a scope.
+
+    Scope is ``subject × setup group`` (optionally the group's camera label).
+    Requires an approved reference; returns an explanatory error otherwise.
+    Proposals are deterministic, include reference + group context, and are
+    persisted **disabled** (never auto-applied) when ``persist=True``.
+    """
+    from colorai.matching import match_subject_in_group
+
+    proposals, error = match_subject_in_group(
+        _open(project), asset_id, subject_id=subject_id, group_id=group_id, persist=persist
+    )
+    if error:
+        return {"error": error, "proposals": []}
+    return {
+        "reference_shot_id": proposals[0].reference_shot_id if proposals else None,
+        "subject_id": subject_id,
+        "group_id": group_id,
+        "proposals": [
+            {
+                "shot_id": p.shot_id,
+                "reference_shot_id": p.reference_shot_id,
+                "group_id": p.group_id,
+                "reasons": list(p.reasons),
+                "corrections": [
+                    {"kind": c.kind, "parameters": c.parameters} for c in p.corrections
+                ],
+            }
+            for p in proposals
+        ],
+    }
+
+
+@mcp.tool()
+def matching_workspace(project: str, asset_id: int) -> dict:
+    """Structured read for matching: subjects, setup groups, member shots,
+    metrics, skin samples, references, and review state."""
+    from colorai.project.models import (
+        Correction,
+        FrameMetrics,
+        MediaAsset,
+        ReferenceProposal,
+        Shot,
+        ShotGroup,
+        SkinMetric,
+        Subject,
+    )
+
+    store = _open(project)
+    with store.session() as session:
+        if session.get(MediaAsset, asset_id) is None:
+            return {"error": "asset not found"}
+        subjects = session.query(Subject).filter_by(asset_id=asset_id).order_by(Subject.id).all()
+        groups = session.query(ShotGroup).filter_by(asset_id=asset_id).order_by(ShotGroup.id).all()
+        shots = session.query(Shot).filter_by(asset_id=asset_id).order_by(Shot.index).all()
+        proposals = session.query(ReferenceProposal).filter_by(asset_id=asset_id).order_by(ReferenceProposal.id).all()
+
+        skin_by_shot: dict[int, list[dict]] = {}
+        for m in session.query(SkinMetric).filter(SkinMetric.shot_id.in_([s.id for s in shots])).order_by(SkinMetric.shot_id, SkinMetric.face_index).all():
+            skin_by_shot.setdefault(m.shot_id, []).append(
+                {
+                    "id": m.id,
+                    "face_index": m.face_index,
+                    "subject_id": m.subject_id,
+                    "mean_bgr": [round(m.mean_b, 4), round(m.mean_g, 4), round(m.mean_r, 4)],
+                }
+            )
+        metrics_by_shot = {
+            m.shot_id: m
+            for m in session.query(FrameMetrics).filter(FrameMetrics.shot_id.in_([s.id for s in shots])).all()
+        }
+        corrections_by_shot: dict[int, list[dict]] = {}
+        for c in session.query(Correction).filter(Correction.shot_id.in_([s.id for s in shots])).order_by(Correction.id).all():
+            corrections_by_shot.setdefault(c.shot_id, []).append(
+                {"kind": c.kind, "parameters": c.parameters, "enabled": c.enabled}
+            )
+
+        def shot_view(s: Shot) -> dict:
+            m = metrics_by_shot.get(s.id)
+            return {
+                "id": s.id,
+                "index": s.index,
+                "start_tc": s.start_timecode,
+                "end_tc": s.end_timecode,
+                "review_status": s.review_status,
+                "excused": s.excused,
+                "group_id": s.group_id,
+                "metrics": {
+                    "luma_mean": m.luma_mean,
+                    "luma_std": m.luma_std,
+                    "r_mean": m.r_mean,
+                    "g_mean": m.g_mean,
+                    "b_mean": m.b_mean,
+                    "saturation_mean": m.saturation_mean,
+                }
+                if m
+                else None,
+                "skin": skin_by_shot.get(s.id, []),
+                "corrections": corrections_by_shot.get(s.id, []),
+            }
+
+        approved_by_scope: dict[tuple, int] = {}
+        for p in proposals:
+            if p.state == "approved":
+                approved_by_scope[(p.subject_id, p.group_id)] = p.shot_id
+
+        return {
+            "asset_id": asset_id,
+            "subjects": [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "reference_shot_id": s.reference_shot_id,
+                    "approved_reference": approved_by_scope.get((s.id, None)),
+                }
+                for s in subjects
+            ],
+            "groups": [
+                {
+                    "id": g.id,
+                    "name": g.name,
+                    "kind": g.kind,
+                    "camera": g.camera,
+                    "member_shots": [shot_view(s) for s in shots if s.group_id == g.id],
+                }
+                for g in groups
+            ],
+            "ungrouped_shots": [shot_view(s) for s in shots if s.group_id is None],
+            "reference_proposals": [
+                {
+                    "id": p.id,
+                    "subject_id": p.subject_id,
+                    "group_id": p.group_id,
+                    "shot_id": p.shot_id,
+                    "author": p.author,
+                    "reason": p.reason,
+                    "confidence": p.confidence,
+                    "state": p.state,
+                }
+                for p in proposals
+            ],
+        }
 
 
 @mcp.tool()

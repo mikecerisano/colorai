@@ -208,6 +208,36 @@ genuinely damaged temporal intervals and is modeled separately — see
 generative boundary, and `src/colorai/generative.py` for the RIFE + LaMa ONNX
 loader and availability surface (models are not bundled).
 
+## Matching model (interview/setup-aware)
+
+ColorAI must preserve intent, not normalize the film, so the analysis unit for
+matching is:
+
+    subject × setup family × camera angle (optional, human-assigned)
+
+* **Groups** (`ShotGroup`) carry ``kind="setup"`` for an interview/setup family
+  and an optional ``camera`` label. Camera labels are **never inferred from
+  pixels** — a human or vision agent assigns them, because framing, lighting,
+  windows, and wardrobe judgment is exactly what the agent is for.
+* **References** (`ReferenceProposal`, ``references.py``) are human-approved:
+  an agent proposes a candidate shot with a reason and confidence
+  (``suggested``); a human approves or rejects. Only an approved proposal (or
+  the subject's explicitly-set hero shot) is an effective reference. Matching
+  without an approved reference refuses with an explanation. Reference
+  criteria are framing, lighting, skin visibility, and exposure stability —
+  deliberately **not** clipping/crush thresholds, which are normal in a
+  finished Rec.709 master.
+* **Group-aware matching** (`matching.py`, MCP ``match_subject_setup``)
+  compares only a subject's shots inside the approved scope: skin **within the
+  subject** and shot level against the reference. Proposals identify their
+  reference and group, and persist **disabled** (never auto-applied). Global
+  median matching (`analysis.find_outliers`) stays available as an explicit
+  diagnostic, not a default.
+* **QC signals are evidence** — clipping/crush, blur, flicker, and
+  blank/duplicate frames are reported as measurements with interpretation
+  notes (bright windows, practicals, dark furniture are often intentional),
+  to help an agent compare similar shots — not to trigger automatic fixes.
+
 ## Agent integration (MCP)
 
 ColorAI is the deterministic **body**; an LLM/agent is the **brain** that

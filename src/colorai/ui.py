@@ -118,6 +118,15 @@ class GroupAssign(BaseModel):
     group_id: int
 
 
+class ReferenceProposalIn(BaseModel):
+    shot_id: int
+    reason: str
+    confidence: float = 1.0
+    subject_id: int | None = None
+    group_id: int | None = None
+    author: str = "human"
+
+
 class NoteIn(BaseModel):
     text: str
     author: str = "human"
@@ -156,6 +165,26 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             first_asset = session.query(MediaAsset).order_by(MediaAsset.id).first()
             if first_asset is not None:
                 asset_id = first_asset.id
+            reference_view: list[dict] = []
+            if asset_id is not None:
+                from colorai.project.models import ReferenceProposal
+
+                reference_view = [
+                    {
+                        "id": p.id,
+                        "shot_id": p.shot_id,
+                        "subject_id": p.subject_id,
+                        "group_id": p.group_id,
+                        "author": p.author,
+                        "reason": p.reason,
+                        "confidence": round(p.confidence, 2),
+                        "state": p.state,
+                    }
+                    for p in session.query(ReferenceProposal)
+                    .filter_by(asset_id=asset_id)
+                    .order_by(ReferenceProposal.id)
+                    .all()
+                ]
             corrections_by_shot: dict[int, list[Correction]] = {}
             for c in session.query(Correction).order_by(Correction.id).all():
                 corrections_by_shot.setdefault(c.shot_id, []).append(c)
@@ -194,7 +223,12 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
         return templates.TemplateResponse(
             request,
             "index.html",
-            {"projects": ", ".join(project_names) or "(none)", "shots": shots_view, "asset_id": asset_id},
+            {
+                "projects": ", ".join(project_names) or "(none)",
+                "shots": shots_view,
+                "asset_id": asset_id,
+                "references": reference_view,
+            },
         )
 
     # -- correction API ------------------------------------------------------
@@ -325,6 +359,63 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
         if shot is None:
             raise HTTPException(status_code=404, detail="shot not found")
         return {"id": shot.id, "group_id": shot.group_id}
+
+    # -- reference proposals ------------------------------------------------
+
+    @app.get("/api/assets/{asset_id}/reference-proposals")
+    def list_reference_proposals_endpoint(asset_id: int):
+        from colorai.references import list_reference_proposals as _list
+
+        return [
+            {
+                "id": p.id,
+                "subject_id": p.subject_id,
+                "group_id": p.group_id,
+                "shot_id": p.shot_id,
+                "author": p.author,
+                "reason": p.reason,
+                "confidence": p.confidence,
+                "state": p.state,
+            }
+            for p in _list(store, asset_id)
+        ]
+
+    @app.post("/api/assets/{asset_id}/reference-proposals", status_code=201)
+    def propose_reference_endpoint(asset_id: int, payload: ReferenceProposalIn):
+        from colorai.references import propose_reference as _propose
+
+        try:
+            proposal = _propose(
+                store,
+                asset_id=asset_id,
+                shot_id=payload.shot_id,
+                reason=payload.reason,
+                confidence=payload.confidence,
+                subject_id=payload.subject_id,
+                group_id=payload.group_id,
+                author=payload.author,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"id": proposal.id, "state": proposal.state, "shot_id": proposal.shot_id}
+
+    @app.post("/api/reference-proposals/{proposal_id}/approve")
+    def approve_reference_endpoint(proposal_id: int):
+        from colorai.references import approve_reference as _approve
+
+        proposal = _approve(store, proposal_id)
+        if proposal is None:
+            raise HTTPException(status_code=404, detail="proposal not found")
+        return {"id": proposal.id, "state": proposal.state}
+
+    @app.post("/api/reference-proposals/{proposal_id}/reject")
+    def reject_reference_endpoint(proposal_id: int):
+        from colorai.references import reject_reference as _reject
+
+        proposal = _reject(store, proposal_id)
+        if proposal is None:
+            raise HTTPException(status_code=404, detail="proposal not found")
+        return {"id": proposal.id, "state": proposal.state}
 
     @app.post("/api/shots/{shot_id}/corrections", status_code=201)
     def add_correction(shot_id: int, payload: CorrectionIn):

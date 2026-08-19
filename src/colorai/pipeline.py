@@ -35,6 +35,7 @@ from colorai.shotdetect import (
     DEFAULT_THRESHOLD,
     detect_and_store_shots,
 )
+from colorai.skin_analysis import auto_assign_subjects
 
 
 @dataclass(frozen=True)
@@ -244,6 +245,20 @@ def analyze_master(
 
     asset_stills = Path(stills_dir) / f"asset_{asset.id:04d}"
     frames, metrics, skin_metrics = _refresh(store, asset, shots, asset_stills)
+
+    # Identity-based subject grouping on fresh analyses. Skipped when any face
+    # already has a subject (a prior run or a manual/agent edit), so resumable
+    # runs never clobber human regroupings.
+    with store.session() as session:
+        assigned = (
+            session.query(SkinMetric)
+            .filter(SkinMetric.subject_id.isnot(None))
+            .join(Shot, SkinMetric.shot_id == Shot.id)
+            .filter(Shot.asset_id == asset.id)
+            .count()
+        )
+    if assigned == 0:
+        auto_assign_subjects(store, asset.id)
 
     with store.session() as session:
         session.query(MediaAsset).filter(MediaAsset.id == asset.id).update(

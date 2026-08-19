@@ -34,6 +34,10 @@
     .notes { display: flex; flex-direction: column; gap: 0.4rem; }
     .note { background: #1c1c1e; border: 1px solid #333; border-radius: 6px; padding: 0.5rem 0.7rem; font-size: 0.82rem; }
     .note .author { color: #9cf; font-size: 0.72rem; }
+    .ref-state { display: inline-block; margin-right: 0.5rem; padding: 0 0.4rem; border-radius: 8px; font-size: 0.72rem; border: 1px solid #555; }
+    .ref-state-suggested { color: #fc9; border-color: #a67c2e; }
+    .ref-state-approved { color: #9f9; border-color: #4a7c4a; }
+    .ref-state-rejected { color: #f99; border-color: #7c4a4a; }
   </style>
 </head>
 <body>
@@ -67,6 +71,23 @@
           <span>B <b>{{ s.b_mean }}</b></span>
         </div>
       </div>
+    </div>
+  {% endfor %}
+  </div>
+
+  <h2>Reference proposals</h2>
+  <div id="references" class="notes">
+  {% if not references %}<span class="muted">No reference proposals yet.</span>{% endif %}
+  {% for r in references %}
+    <div class="note" data-proposal="{{ r.id }}">
+      <span class="ref-state ref-state-{{ r.state }}">{{ r.state }}</span>
+      <span class="muted">shot {{ r.shot_id }}{% if r.subject_id %} · subject {{ r.subject_id }}{% endif %}{% if r.group_id %} · group {{ r.group_id }}{% endif %} · conf {{ r.confidence }}</span>
+      <div>{{ r.reason }}</div>
+      <div class="author">{{ r.author }}</div>
+      {% if r.state == "suggested" %}
+      <button data-approve="{{ r.id }}">Approve</button>
+      <button data-reject="{{ r.id }}">Reject</button>
+      {% endif %}
     </div>
   {% endfor %}
   </div>
@@ -250,6 +271,20 @@
     document.querySelectorAll('.shot').forEach(card => refreshShot(card.dataset.shot));
     refreshSubjects();
     refreshNotes();
+
+    // --- reference proposals ------------------------------------------------
+    document.querySelectorAll('[data-approve]').forEach(btn => {
+      btn.onclick = async () => {
+        await fetch(`/api/reference-proposals/${btn.dataset.approve}/approve`, { method:'POST' });
+        location.reload();
+      };
+    });
+    document.querySelectorAll('[data-reject]').forEach(btn => {
+      btn.onclick = async () => {
+        await fetch(`/api/reference-proposals/${btn.dataset.reject}/reject`, { method:'POST' });
+        location.reload();
+      };
+    });
   </script>
 </body>
 </html>

@@ -70,3 +70,37 @@ def test_group_api(tmp_path):
     assert client.delete(f"/api/shots/{shots[0].id}/group").status_code == 200
     assert client.delete(f"/api/groups/{group_id}").status_code == 204
     assert client.get(f"/api/assets/{asset.id}/groups").json() == []
+
+
+def test_reference_proposal_api(tmp_path):
+    client, asset, shots = _client(tmp_path)
+    created = client.post(
+        f"/api/assets/{asset.id}/reference-proposals",
+        json={"shot_id": shots[0].id, "reason": "hero: stable and well lit", "confidence": 0.8},
+    )
+    assert created.status_code == 201
+    proposal_id = created.json()["id"]
+
+    listing = client.get(f"/api/assets/{asset.id}/reference-proposals").json()
+    assert listing[0]["state"] == "suggested"
+
+    approved = client.post(f"/api/reference-proposals/{proposal_id}/approve")
+    assert approved.json()["state"] == "approved"
+    assert client.get(f"/api/assets/{asset.id}/reference-proposals").json()[0]["state"] == "approved"
+
+
+def test_reference_proposal_reject_and_invalid(tmp_path):
+    client, asset, shots = _client(tmp_path)
+    r = client.post(
+        f"/api/assets/{asset.id}/reference-proposals",
+        json={"shot_id": shots[0].id, "reason": "", "confidence": 0.5},
+    )
+    assert r.status_code == 400
+
+    created = client.post(
+        f"/api/assets/{asset.id}/reference-proposals",
+        json={"shot_id": shots[0].id, "reason": "maybe", "confidence": 0.3},
+    ).json()
+    rejected = client.post(f"/api/reference-proposals/{created['id']}/reject")
+    assert rejected.json()["state"] == "rejected"
+    assert client.post(f"/api/reference-proposals/9999/approve").status_code == 404

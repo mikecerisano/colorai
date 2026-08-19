@@ -81,13 +81,61 @@ def set_excused(store: ProjectStore, shot_id: int, excused: bool) -> Shot | None
 # Scene / camera-family grouping
 # ---------------------------------------------------------------------------
 
-def create_group(store: ProjectStore, asset_id: int, name: str) -> ShotGroup:
-    """Create a shot group (scene / camera family) on an asset."""
+GROUP_KIND_SETUP = "setup"
+GROUP_KIND_GENERIC = "generic"
+GROUP_KINDS = (GROUP_KIND_GENERIC, GROUP_KIND_SETUP)
+
+
+def create_group(
+    store: ProjectStore,
+    asset_id: int,
+    name: str,
+    *,
+    kind: str = GROUP_KIND_GENERIC,
+    camera: str | None = None,
+) -> ShotGroup:
+    """Create a shot group (scene / camera family / interview setup) on an asset.
+
+    ``kind="setup"`` marks an interview/setup family (the unit for group-aware
+    matching); ``camera`` is an optional human/agent-assigned angle label.
+    """
+    if kind not in GROUP_KINDS:
+        raise ValueError(f"invalid group kind {kind!r}")
     with store.session() as session:
         if session.get(MediaAsset, asset_id) is None:
             raise ValueError(f"asset {asset_id} not found")
-        group = ShotGroup(asset_id=asset_id, name=name)
+        group = ShotGroup(asset_id=asset_id, name=name, kind=kind, camera=camera)
         session.add(group)
+        session.flush()
+        session.refresh(group)
+        return group
+
+
+def update_group(
+    store: ProjectStore,
+    group_id: int,
+    *,
+    name: str | None = None,
+    camera: str | None = None,
+    kind: str | None = None,
+) -> ShotGroup | None:
+    """Update a group's name, camera label, and/or kind.
+
+    Pass ``camera=""`` to clear the label. Kind/camera are human/agent
+    decisions — never inferred from pixels.
+    """
+    if kind is not None and kind not in GROUP_KINDS:
+        raise ValueError(f"invalid group kind {kind!r}")
+    with store.session() as session:
+        group = session.get(ShotGroup, group_id)
+        if group is None:
+            return None
+        if name is not None:
+            group.name = name
+        if camera is not None:
+            group.camera = camera or None
+        if kind is not None:
+            group.kind = kind
         session.flush()
         session.refresh(group)
         return group

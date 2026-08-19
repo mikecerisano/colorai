@@ -46,11 +46,44 @@ def _enable_foreign_keys(engine: Engine) -> None:
         cursor.close()
 
 
+def _legacy_chain(inspector) -> list[tuple[str, bool]]:
+    """Marker predicates per schema revision (oldest to newest).
+
+    Used to recognize a pre-Alembic database's schema version so it can be
+    stamped at the right point before upgrading forward. Each predicate checks
+    for the tables/columns that revision introduced.
+    """
+    tables = set(inspector.get_table_names())
+
+    def columns(table: str) -> set[str]:
+        if table not in tables:
+            return set()
+        return {c["name"] for c in inspector.get_columns(table)}
+
+    has_initial = {
+        "projects", "media_assets", "shots", "corrections",
+        "frame_metrics", "representative_frames",
+    } <= tables
+    return [
+        ("17b6ba1a84c7", has_initial),
+        ("3336e58df071", "skin_metrics" in tables),
+        ("b494e149e8b0", "subjects" in tables and "subject_id" in columns("skin_metrics")),
+        ("0026a3722cec", "notes" in tables),
+        ("c7d3e8a1f2b4", "source_hash" in columns("media_assets")),
+        ("b5e2d9c3a4f6", "shot_groups" in tables and "review_status" in columns("shots")),
+        ("d8f4e6a1c2b3", "reference_proposals" in tables and "kind" in columns("shot_groups")),
+    ]
+
+
 def _migrate(path: Path) -> None:
     """Apply Alembic migrations to a file-based project database.
 
     Idempotent: ``upgrade head`` is a no-op when already current, and applies
     any pending revisions when opening an older database.
+
+    Pre-Alembic databases (populated tables, no ``alembic_version`` row) are
+    recognized and stamped at the matching revision first, so opening them
+    never tries to recreate existing tables or touches their data.
     """
     import os
 
@@ -63,7 +96,46 @@ def _migrate(path: Path) -> None:
     cfg = Config(str(pkg_dir / "alembic.ini"))
     cfg.set_main_option("script_location", str(pkg_dir / "migrations"))
     os.environ["COLORAI_DB_URL"] = f"sqlite+pysqlite:///{path.resolve().as_posix()}"
+
+    _bootstrap_legacy(path, cfg)
     command.upgrade(cfg, "head")
+
+
+def _bootstrap_legacy(path: Path, cfg: object) -> None:
+    """Stamp a legacy (pre-Alembic) database at its matching revision.
+
+    Never drops or rewrites data: it only reads the schema, stamps the
+    ``alembic_version`` table, and lets the normal upgrade path apply whatever
+    is genuinely missing.
+    """
+    from alembic import command
+    from sqlalchemy import create_engine, inspect
+
+    if not path.exists() or path.stat().st_size == 0:
+        return
+
+    engine = create_engine(f"sqlite+pysqlite:///{path.resolve().as_posix()}")
+    try:
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+        if "alembic_version" in tables or not tables:
+            return  # already managed, or a fresh empty file
+
+        chain = _legacy_chain(inspector)
+        if not chain[0][1]:
+            raise RuntimeError(
+                f"{path} has tables but does not look like a ColorAI database; "
+                "refusing to guess its schema version"
+            )
+        stamp: str | None = None
+        for revision, present in chain:
+            if present:
+                stamp = revision
+            else:
+                break
+        command.stamp(cfg, stamp)
+    finally:
+        engine.dispose()
 
 
 class ProjectStore:

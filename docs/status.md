@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 315 tests passing.
+Current progress. 337 tests passing.
 
 ## Done
 
@@ -80,12 +80,34 @@ Current progress. 315 tests passing.
   (`generative_status` MCP tool); inference I/O lands with the model files.
 - **Editorial intelligence** — per-shot `review_status` (pending/approved/
   rejected) and `excused` (intentional-exception) flags; scene/camera-family
-  `ShotGroup` grouping; manual `split_shot` / `merge_shots` that preserve
-  corrections and reset the asset for a re-derive. Exposed via UI, API, and
-  MCP; the outlier detector skips excused shots.
+  `ShotGroup` grouping (with `kind` — `setup` for interview/setup families —
+  and an optional human-assigned `camera` label); manual `split_shot` /
+  `merge_shots` that preserve corrections and reset the asset for a re-derive.
+  Exposed via UI, API, and MCP; the outlier detector skips excused shots.
+- **Legacy database bootstrap** — pre-Alembic databases (populated tables, no
+  ``alembic_version``) are recognized by marker tables/columns, stamped at the
+  matching revision, and migrated forward; data is never dropped or rewritten.
+- **Auto-subject assignment** — ``analyze`` now runs identity-based
+  ``auto_assign_subjects`` on fresh analyses; runs skip it when any face is
+  already assigned, so manual/agent regroupings survive resumable re-analysis.
+- **Human-approved references** — ``ReferenceProposal`` rows carry candidate
+  shot, reason, confidence, and state (``suggested`` / ``approved`` /
+  ``rejected``). Only an explicit human approve (or the subject's set hero
+  shot) is an effective reference; nothing applies automatically. Exposed via
+  UI (suggested vs approved clearly distinguished), API, and MCP.
+- **Group-aware matching** — ``matching.py`` compares a subject's shots only
+  within an approved ``subject × setup group`` scope (skin within the subject
+  only, shot level vs the approved reference). Proposals carry reference and
+  group context and persist **disabled**. Global median matching remains an
+  explicit diagnostic, not the default. ``matching_workspace`` (MCP) returns
+  the structured view: subjects, setup groups, member shots, metrics, skin
+  samples, references, and review state.
 - **Temporal QC** — `qc.py` detects frame-to-frame flicker, per-shot clipped
   highlights / crushed blacks (from stored luma percentiles), and blank /
-  duplicate damaged-frame signatures; exposed via MCP.
+  duplicate damaged-frame signatures; exposed via MCP. Reports carry
+  interpretation notes framing bright/deep-shadow content as *measurements,
+  not defects* — evidence for comparing similar shots, never a batch-fix
+  trigger.
 - **Tone curves + `.cube` LUTs** — a `curve` kind (monotonic control points,
   `rgb` / `per_channel` / `luma` modes) and a `lut` kind (1D/3D `.cube`,
   trilinear/linear interpolation, domain clamping) both applied in linear
@@ -98,6 +120,8 @@ Current progress. 315 tests passing.
 
 ## Not yet done (next)
 
+- Automatic visual camera-angle inference — **intentionally not implemented**;
+  setup/camera labels are human/agent-assigned (by design).
 - Bundle the generative model files themselves (RIFE + LaMa ONNX) — the loader
   and status surface are wired; the models are large and gitignored.
 - Per-model RIFE/LaMa inference I/O (pre/post-processing), which depends on the
@@ -113,9 +137,10 @@ Current progress. 315 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 315 tests across timecode, project model, migrations, ingest, shot
-  detection, frames, metrics, pipeline, correction, LUT/curve, render,
-  resumability, editorial, analysis, face, skin, skin analysis, tracking,
+- 337 tests across timecode, project model, migrations (incl. legacy
+  bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
+  auto-assignment), correction, LUT/curve, render, resumability, editorial,
+  references, matching, analysis, face, skin, skin analysis, tracking,
   anomaly, QC, generative, restoration, MCP, UI, and CLI.
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45
   shots, three skin subjects separated, and per-subject skin drift flagged
