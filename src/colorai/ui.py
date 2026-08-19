@@ -178,6 +178,20 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             session.refresh(correction)
         return _correction_dict(correction)
 
+    @app.post("/api/shots/{shot_id}/propose", status_code=201)
+    def propose_for_shot(shot_id: int):
+        from colorai.analysis import find_outliers, persist_proposals
+
+        with store.session() as session:
+            shot = session.get(Shot, shot_id)
+            if shot is None:
+                raise HTTPException(status_code=404, detail="shot not found")
+            asset_id = shot.asset_id
+        outliers = find_outliers(store, asset_id)
+        mine = [d for d in outliers if d.shot_id == shot_id]
+        created = persist_proposals(store, mine)
+        return {"created": [_correction_dict(c) for c in created]}
+
     @app.patch("/api/corrections/{correction_id}")
     def update_correction(correction_id: int, payload: CorrectionUpdate):
         with store.session() as session:

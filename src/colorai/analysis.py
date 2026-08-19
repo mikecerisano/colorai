@@ -105,6 +105,60 @@ def median_reference(features: list[ShotFeature]) -> ShotFeature:
     return min(features, key=lambda f: abs(f.luma_mean - target))
 
 
+def feature_from_image(path: str) -> ShotFeature:
+    """Compute a reference feature vector from an arbitrary still image.
+
+    Enables matching a shot against an external reference still (another
+    shot's grade, a hero still, a client reference), not just the median shot.
+    """
+    from colorai.metrics import metrics_from_path
+
+    m = metrics_from_path(path)
+    return ShotFeature(
+        shot_id=0,  # not a persisted shot; identity is irrelevant for matching
+        luma_mean=float(m["luma_mean"]),
+        r_mean=float(m["r_mean"]),
+        g_mean=float(m["g_mean"]),
+        b_mean=float(m["b_mean"]),
+        saturation_mean=float(m["saturation_mean"]),
+    )
+
+
+def load_shot_feature(store: ProjectStore, shot_id: int) -> ShotFeature | None:
+    """Load a single shot's feature vector from its stored metrics."""
+    with store.session() as session:
+        metrics = (
+            session.query(FrameMetrics)
+            .filter_by(shot_id=shot_id)
+            .order_by(FrameMetrics.id)
+            .first()
+        )
+    if metrics is None or metrics.luma_mean is None:
+        return None
+    return ShotFeature(
+        shot_id=shot_id,
+        luma_mean=float(metrics.luma_mean),
+        r_mean=float(metrics.r_mean or 0.0),
+        g_mean=float(metrics.g_mean or 0.0),
+        b_mean=float(metrics.b_mean or 0.0),
+        saturation_mean=float(metrics.saturation_mean or 0.0),
+    )
+
+
+def match_shot_to_reference(
+    store: ProjectStore,
+    shot_id: int,
+    reference_image_path: str,
+    **tolerances: float,
+) -> ShotDeviation:
+    """Propose corrections to match a shot to an arbitrary reference still."""
+    shot = load_shot_feature(store, shot_id)
+    if shot is None:
+        raise ValueError(f"shot {shot_id} has no metrics")
+    reference = feature_from_image(reference_image_path)
+    return propose_corrections(reference, shot, **tolerances)
+
+
 def propose_corrections(
     reference: ShotFeature,
     shot: ShotFeature,

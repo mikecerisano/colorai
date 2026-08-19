@@ -22,6 +22,9 @@ python3.12 -m venv .venv
 # Analyze a master end-to-end (ingest -> shots -> frames -> metrics)
 .venv/bin/colorai analyze /path/to/master.mov --project data/project.sqlite3
 
+# Apply pending schema migrations (optional; analyze auto-creates fresh DBs)
+.venv/bin/colorai db migrate --project data/project.sqlite3
+
 # Start the local review UI
 .venv/bin/colorai ui --project data/project.sqlite3 --port 8000
 ```

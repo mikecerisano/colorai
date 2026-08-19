@@ -1,8 +1,8 @@
 """ColorAI command-line interface.
 
 ``analyze`` runs the full pipeline (ingest -> shot detection -> representative
-frames -> metrics) and writes results to the project database. ``ui`` is
-declared with its final argument shape but is not implemented yet.
+frames -> metrics). ``ui`` starts the review server. ``db migrate`` applies
+Alembic schema migrations to a project database.
 """
 
 from __future__ import annotations
@@ -37,12 +37,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_ui = sub.add_parser(
         "ui",
         help="Start the local review UI.",
-        description="Start the local review UI (not yet implemented).",
     )
     p_ui.add_argument(
         "--project", default="data/project.sqlite3", help="Project database path."
     )
     p_ui.add_argument("--port", type=int, default=8000, help="Port to listen on.")
+
+    p_db = sub.add_parser("db", help="Database management.")
+    db_sub = p_db.add_subparsers(dest="db_command", metavar="COMMAND")
+    p_db_migrate = db_sub.add_parser("migrate", help="Apply pending schema migrations.")
+    p_db_migrate.add_argument(
+        "--project", default="data/project.sqlite3", help="Project database path."
+    )
 
     return parser
 
@@ -86,6 +92,24 @@ def _run_ui(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_db_migrate(args: argparse.Namespace) -> int:
+    import os
+
+    import colorai
+    from alembic import command
+    from alembic.config import Config
+
+    pkg_dir = Path(colorai.__file__).resolve().parent
+    cfg = Config(str(pkg_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(pkg_dir / "migrations"))
+    os.environ["COLORAI_DB_URL"] = (
+        f"sqlite+pysqlite:///{Path(args.project).resolve().as_posix()}"
+    )
+    command.upgrade(cfg, "head")
+    print(f"migrated {args.project}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -96,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_analyze(args)
     if args.command == "ui":
         return _run_ui(args)
+    if args.command == "db" and args.db_command == "migrate":
+        return _run_db_migrate(args)
     print(f"error: 'colorai {args.command}' is not implemented yet")
     return 1
 

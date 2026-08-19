@@ -64,6 +64,17 @@ def metrics_from_path(path: str) -> dict[str, float]:
     return compute_frame_metrics(image)
 
 
+def frame_sharpness(image_bgr: np.ndarray) -> float:
+    """Sharpness proxy: variance of the Laplacian of the luma plane.
+
+    Higher = sharper/more edge energy. Used for content-aware representative
+    frame selection (a flat frame scores ~0, an in-focus textured frame scores
+    higher).
+    """
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
 def store_frame_metrics(
     store: ProjectStore, shot: Shot, frame_index: int, metrics: dict[str, Any]
 ) -> Any:

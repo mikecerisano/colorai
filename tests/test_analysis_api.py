@@ -85,3 +85,15 @@ def test_outliers_unknown_reference_404(tmp_path):
     client, asset, shots = _client(tmp_path)
     r = client.get(f"/api/assets/{asset.id}/outliers", params={"reference_shot_id": 9999})
     assert r.status_code == 404
+
+
+def test_propose_for_shot(tmp_path):
+    client, asset, shots = _client(tmp_path)
+    r = client.post(f"/api/shots/{shots[1].id}/propose")
+    assert r.status_code == 201
+    created = r.json()["created"]
+    assert any(c["kind"] == "exposure" for c in created)
+
+    # Proposals should now show up on the shot.
+    shot = client.get(f"/api/shots/{shots[1].id}").json()
+    assert shot["corrections"]

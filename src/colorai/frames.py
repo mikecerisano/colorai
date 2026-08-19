@@ -1,9 +1,9 @@
 """Representative frame selection and extraction.
 
-For each shot a single still is chosen (currently the middle frame) and
-extracted frame-accurately with ffmpeg. The still is recorded as a
-:class:`~colorai.project.models.RepresentativeFrame` and used later for image
-metrics and the review UI.
+For each shot a single still is chosen and extracted frame-accurately with
+ffmpeg. The default selector is the middle frame; a content-aware ``sharpest``
+selector samples several frames and keeps the one with the highest
+Laplacian-variance sharpness (see :func:`colorai.metrics.frame_sharpness`).
 
 Frame-accurate extraction uses ``select=eq(n\\,N)`` which decodes from the
 start of the stream; that is exact but not seek-optimized. A keyframe-seek +
@@ -12,16 +12,40 @@ start of the stream; that is exact but not seek-optimized. A keyframe-seek +
 
 from __future__ import annotations
 
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
+import cv2
+
+from colorai.metrics import frame_sharpness
 from colorai.project.models import MediaAsset, RepresentativeFrame, Shot
 from colorai.project.store import ProjectStore, make_representative_frame
+
+SELECTOR_MIDDLE = "middle"
+SELECTOR_SHARPEST = "sharpest"
+DEFAULT_SAMPLES = 5
 
 
 def representative_frame_index(shot: Shot) -> int:
     """Pick the middle frame of a shot as its representative still."""
     return (shot.start_frame + shot.end_frame) // 2
+
+
+def select_sharpest(scores: dict[int, float]) -> int:
+    """Pick the frame index with the highest sharpness (ties -> lowest index)."""
+    if not scores:
+        raise ValueError("no candidate scores")
+    return max(scores, key=lambda idx: (scores[idx], -idx))
+
+
+def _candidate_indices(shot: Shot, samples: int) -> list[int]:
+    """Evenly spaced candidate frames within the shot (inclusive bounds)."""
+    start, end = shot.start_frame, shot.end_frame
+    if samples <= 1 or end == start:
+        return [representative_frame_index(shot)]
+    return sorted({round(start + (end - start) * i / (samples - 1)) for i in range(samples)})
 
 
 def extract_frame(
@@ -52,14 +76,34 @@ def extract_frame(
     return destination
 
 
+def _choose_index(asset: MediaAsset, shot: Shot, selector: str, samples: int) -> int:
+    if selector != SELECTOR_SHARPEST:
+        return representative_frame_index(shot)
+
+    probe_dir = Path(tempfile.mkdtemp(prefix="colorai_probe_"))
+    try:
+        scores: dict[int, float] = {}
+        for idx in _candidate_indices(shot, samples):
+            still = extract_frame(asset.source_path, idx, probe_dir / f"{idx}.png")
+            image = cv2.imread(str(still), cv2.IMREAD_COLOR)
+            scores[idx] = frame_sharpness(image) if image is not None else 0.0
+        return select_sharpest(scores)
+    finally:
+        shutil.rmtree(probe_dir, ignore_errors=True)
+
+
 def extract_representative_frames(
     store: ProjectStore,
     asset: MediaAsset,
     shots: list[Shot],
     stills_dir: str | Path,
+    *,
+    selector: str = SELECTOR_MIDDLE,
+    samples: int = DEFAULT_SAMPLES,
 ) -> list[RepresentativeFrame]:
     """Extract and persist one representative still per shot.
 
+    ``selector`` is ``"middle"`` (default) or ``"sharpest"`` (content-aware).
     Still filenames are deterministic (``shot_0001_frame_000050.png``) so the
     operation is idempotent and reproducible.
     """
@@ -67,7 +111,7 @@ def extract_representative_frames(
     frames: list[RepresentativeFrame] = []
     with store.session() as session:
         for shot in shots:
-            index = representative_frame_index(shot)
+            index = _choose_index(asset, shot, selector, samples)
             out = stills / f"shot_{shot.index:04d}_frame_{index:06d}.png"
             extract_frame(asset.source_path, index, out)
             rf = make_representative_frame(

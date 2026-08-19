@@ -35,18 +35,25 @@ ffmpeg-encoded fixtures. Keep them green.
 ```
 src/colorai/
   __init__.py        version
-  cli.py             argparse entry point (colorai analyze / ui)
+  cli.py             argparse entry point (colorai analyze / ui / db)
   ingest.py          probe + register a master
   media/probe.py     ffprobe -> MediaAsset metadata
   shotdetect.py      PySceneDetect -> inclusive shot bounds
   frames.py          representative still selection + extraction
-  metrics.py         image statistics
+  metrics.py         image statistics + sharpness
+  analysis.py        shot-to-shot consistency + reference matching
+  correction.py      deterministic correction transforms + preview
+  face.py            YuNet face detection + face-region skin sampling
+  skin.py            color-only skin heuristic (experiment)
+  restoration.py     deterministic recovery + generative boundary
   pipeline.py        analyze_master orchestration
-  ui.py              FastAPI review app
+  ui.py              FastAPI review app + correction/analysis API
   core/timecode.py   SMPTE timecode <-> frame conversion
   project/models.py  SQLAlchemy model (Project/Asset/Shot/...)
   project/store.py   ProjectStore + construction helpers
   templates/         Jinja2 UI templates
+  models/            bundled ONNX models (YuNet)
+  migrations/        Alembic env + versions
 tests/               pytest suite, one file per module
 docs/                architecture, status, audit, research notes
 ```
@@ -89,9 +96,18 @@ docs/                architecture, status, audit, research notes
 
 ## Current gaps (do not assume they exist)
 
-- Alembic migrations (schema is created with `create_all` for now).
-- Real face/skin detection (a color-only skin heuristic exists in
-  `src/colorai/skin.py`; no local model detector yet).
-- Content-aware representative-frame selection (currently the middle frame).
-- Full interactive approve/reject UX in the review UI (the correction JSON API
-  and live preview exist; the HTML is still read-only).
+- Generative restoration tier (deterministic recovery exists; the local model
+  is not yet selected — see `docs/research-notes.md`).
+- Seek-optimized still extraction for long-form media.
+- A stronger face model than the bundled YuNet, if the workflow demands it.
+
+## Schema migrations
+
+Alembic is configured (`src/colorai/alembic.ini`, `src/colorai/migrations/`).
+Apply with `colorai db migrate --project <path>`, and add a new revision for
+any model change:
+
+```bash
+COLORAI_DB_URL=sqlite+pysqlite:////tmp/seed.sqlite3 \
+  .venv/bin/alembic -c src/colorai/alembic.ini revision --autogenerate -m "..."
+```

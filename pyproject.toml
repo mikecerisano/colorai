@@ -20,6 +20,7 @@ dependencies = [
     "tqdm>=4.66",
     "rich>=13",
     "sqlalchemy>=2.0,<3",
+    "alembic>=1.13,<2",
 ]
 
 [project.optional-dependencies]
@@ -40,6 +41,16 @@ colorai = "colorai.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+colorai = [
+    "alembic.ini",
+    "templates/*.html",
+    "models/*.onnx",
+    "migrations/env.py",
+    "migrations/script.py.mako",
+    "migrations/versions/*.py",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

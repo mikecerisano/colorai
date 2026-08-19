@@ -18,6 +18,7 @@ boring, battle-tested infrastructure.
 | tqdm | `>=4.66` | progress reporting for long-form processing | reused |
 | rich | `>=13` | console output | reused |
 | sqlalchemy | `>=2.0,<3` | ORM / persistence | reused |
+| alembic | `>=1.13,<2` | schema migrations | reused |
 
 Web extra: `fastapi`, `uvicorn[standard]`, `jinja2`, `python-multipart` — the
 review UI.
@@ -29,6 +30,9 @@ Dev extra: `pytest`, `pytest-cov`, `httpx` (FastAPI test client).
 - **ffmpeg / ffprobe** — decoding, frame-accurate still extraction, media
   probing. We shell out to it; we do not reimplement demuxing or encoding.
 - **GitHub CLI (`gh`)** — repository creation/push only, not a runtime dep.
+- **OpenCV YuNet face detector** — a bundled ONNX model
+  (`src/colorai/models/face_detection_yunet_2023mar.onnx`, ~230 KB) powers
+  local face detection with no runtime download.
 
 ## What we build ourselves (and why that's the product)
 
@@ -47,12 +51,11 @@ Dev extra: `pytest`, `pytest-cov`, `httpx` (FastAPI test client).
 
 ## Deferred / deliberately not yet introduced
 
-- **Alembic** — schema is created with `create_all` today. We will introduce
-  Alembic once the model stabilizes across real projects; introducing it now
-  would churn migrations with no data to protect. Reversible decision.
 - **scikit-image / scikit-learn** — aspirational (listed in the original
   dependency probe) but not yet needed; add when a concrete algorithm requires
   them rather than pre-emptively.
+- **A generative-restoration model** — the tier is stubbed pending model
+  selection (`research-notes.md`); deterministic recovery needs no model.
 - **OpenColorIO / Resolve APIs** — future integration targets, documented in
   `research-notes.md`, not yet dependencies.
 

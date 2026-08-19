@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import cv2
+import numpy as np
 import pytest
 
 from colorai.analysis import (
     ShotFeature,
+    feature_from_image,
     find_outliers,
+    match_shot_to_reference,
     persist_proposals,
     propose_corrections,
 )
@@ -138,3 +142,43 @@ def test_persist_proposals():
         persisted = session.query(Correction).order_by(Correction.shot_id).all()
     assert {c.kind for c in persisted} == {"exposure", "rgb_balance"}
     assert all(c.enabled for c in persisted)
+
+
+def test_feature_from_image(tmp_path):
+    path = tmp_path / "reference.png"
+    cv2.imwrite(str(path), np.full((16, 16, 3), [128, 128, 128], dtype=np.uint8))
+    feat = feature_from_image(str(path))
+    assert feat.luma_mean == pytest.approx(128 / 255, abs=1e-3)
+    assert feat.r_mean == pytest.approx(128 / 255, abs=1e-3)
+
+
+def test_match_shot_to_reference(tmp_path):
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("match test")
+    asset = store.add_asset(project.id, source_path="/media/m.mov", frame_rate=25.0)
+    shot = make_shots(asset, [(0, 24)])[0]
+    with store.session() as session:
+        session.add(shot)
+        session.flush()
+        session.refresh(shot)
+        session.add(
+            FrameMetrics(
+                shot_id=shot.id,
+                frame_index=0,
+                luma_mean=0.25,
+                r_mean=0.25,
+                g_mean=0.25,
+                b_mean=0.25,
+                saturation_mean=0.0,
+            )
+        )
+        session.commit()
+
+    reference = tmp_path / "ref.png"
+    cv2.imwrite(str(reference), np.full((16, 16, 3), [128, 128, 128], dtype=np.uint8))
+
+    dev = match_shot_to_reference(store, shot.id, str(reference))
+    assert dev.is_outlier
+    exposure = next(c for c in dev.corrections if c.kind == "exposure")
+    # reference luma is 128/255, shot luma is 0.25.
+    assert exposure.parameters["gain"] == pytest.approx((128 / 255) / 0.25, abs=1e-3)

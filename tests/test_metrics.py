@@ -6,7 +6,12 @@ import cv2
 import numpy as np
 import pytest
 
-from colorai.metrics import compute_frame_metrics, metrics_from_path, store_frame_metrics
+from colorai.metrics import (
+    compute_frame_metrics,
+    frame_sharpness,
+    metrics_from_path,
+    store_frame_metrics,
+)
 from colorai.project import ProjectStore, Shot, make_shots
 
 
@@ -69,6 +74,18 @@ def test_metrics_from_path(tmp_path):
     cv2.imwrite(str(out), np.full((16, 16, 3), [128, 128, 128], dtype=np.uint8))
     m = metrics_from_path(str(out))
     assert m["luma_mean"] == pytest.approx(128 / 255, abs=1e-3)
+
+
+def test_frame_sharpness_sharp_vs_blurred():
+    rng = np.random.default_rng(0)
+    sharp = rng.integers(0, 256, (64, 64, 3), dtype=np.uint8)
+    blurred = cv2.GaussianBlur(sharp, (0, 0), 5)
+    assert frame_sharpness(sharp) > frame_sharpness(blurred)
+
+
+def test_frame_sharpness_flat_is_near_zero():
+    flat = np.full((64, 64, 3), 128, dtype=np.uint8)
+    assert frame_sharpness(flat) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_store_frame_metrics(tmp_path):

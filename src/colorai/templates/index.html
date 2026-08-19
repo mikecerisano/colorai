@@ -14,9 +14,14 @@
     .shot .tc { font-family: ui-monospace, monospace; color: #ccc; }
     .metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.15rem 0.5rem; margin-top: 0.4rem; font-size: 0.75rem; color: #aaa; }
     .metrics span { display: flex; justify-content: space-between; }
-    .corrections { margin-top: 0.35rem; display: flex; gap: 0.3rem; flex-wrap: wrap; }
-    .corr { font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 4px; background: #2c4a2c; color: #b6e3b6; }
-    .corr.off { background: #3a2c2c; color: #d0a0a0; }
+    .controls { margin-top: 0.5rem; font-size: 0.8rem; }
+    .corrections { display: flex; flex-direction: column; gap: 0.2rem; margin-bottom: 0.35rem; }
+    .corr-row { display: flex; align-items: center; gap: 0.4rem; }
+    .corr-row label { display: flex; align-items: center; gap: 0.3rem; }
+    .corr-row.off { opacity: 0.5; }
+    .controls button { background: #2c2c2e; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 0.15rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
+    .controls button:hover { background: #3a3a3c; }
+    .corr-row button { padding: 0 0.35rem; }
   </style>
 </head>
 <body>
@@ -27,22 +32,12 @@
   {% endif %}
   <div class="shots">
   {% for s in shots %}
-    <div class="shot">
-      {% if s.has_corrections %}
-        <img src="/shots/{{ s.id }}/preview.png" alt="shot {{ s.index }} corrected">
-      {% else %}
-        <img src="{{ s.still_url }}" alt="shot {{ s.index }}">
-      {% endif %}
+    <div class="shot" data-shot="{{ s.id }}">
+      <img src="/shots/{{ s.id }}/preview.png" alt="shot {{ s.index }}" data-preview>
       <div class="meta">
         <div class="tc">{{ s.start_tc }} → {{ s.end_tc }}</div>
         <div class="muted">shot {{ s.index }} · {{ s.frame_count }} frames</div>
-        {% if s.corrections %}
-        <div class="corrections">
-          {% for c in s.corrections %}
-            <span class="corr{% if not c.enabled %} off{% endif %}">{{ c.kind }}</span>
-          {% endfor %}
-        </div>
-        {% endif %}
+        <div class="controls" data-controls></div>
         <div class="metrics">
           <span>Y <b>{{ s.luma_mean }}</b></span>
           <span>σ <b>{{ s.luma_std }}</b></span>
@@ -55,5 +50,64 @@
     </div>
   {% endfor %}
   </div>
+
+  <script>
+    function bump(card) {
+      const img = card.querySelector('[data-preview]');
+      img.src = img.src.split('?')[0] + '?t=' + Date.now();
+    }
+
+    async function refreshShot(shotId) {
+      const res = await fetch(`/api/shots/${shotId}`);
+      const shot = await res.json();
+      const card = document.querySelector(`.shot[data-shot="${shotId}"]`);
+      const controls = card.querySelector('[data-controls]');
+      controls.innerHTML = '';
+
+      const list = document.createElement('div');
+      list.className = 'corrections';
+      for (const c of shot.corrections) {
+        const row = document.createElement('div');
+        row.className = 'corr-row' + (c.enabled ? '' : ' off');
+
+        const label = document.createElement('label');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = c.enabled;
+        checkbox.onchange = async () => {
+          await fetch(`/api/corrections/${c.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: checkbox.checked }),
+          });
+          bump(card);
+        };
+        label.appendChild(checkbox);
+        label.appendChild(document.createTextNode(c.kind));
+        row.appendChild(label);
+
+        const del = document.createElement('button');
+        del.textContent = '×';
+        del.onclick = async () => {
+          await fetch(`/api/corrections/${c.id}`, { method: 'DELETE' });
+          refreshShot(shotId);
+        };
+        row.appendChild(del);
+
+        list.appendChild(row);
+      }
+      controls.appendChild(list);
+
+      const propose = document.createElement('button');
+      propose.textContent = 'Propose';
+      propose.onclick = async () => {
+        await fetch(`/api/shots/${shotId}/propose`, { method: 'POST' });
+        refreshShot(shotId);
+      };
+      controls.appendChild(propose);
+    }
+
+    document.querySelectorAll('.shot').forEach(card => refreshShot(card.dataset.shot));
+  </script>
 </body>
 </html>
