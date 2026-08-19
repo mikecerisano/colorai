@@ -130,6 +130,55 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                 elif proposal_state.get(p.group_id) != "approved" and p.state == "suggested":
                     proposal_state[p.group_id] = "suggested"
 
+        # A setup family's members include its direct shots plus every
+        # descendant variant group's shots, so the parent Corrections view is
+        # complete. Computed here (not in Jinja) because Jinja loop scope
+        # discards in-loop reassignment.
+        children_by_parent: dict[int, list[int]] = {}
+        for g in groups:
+            if g.parent_id is not None:
+                children_by_parent.setdefault(g.parent_id, []).append(g.id)
+
+        def descendant_group_ids(group_id: int) -> list[int]:
+            ids = [group_id]
+            for child_id in children_by_parent.get(group_id, []):
+                ids.extend(descendant_group_ids(child_id))
+            return ids
+
+        member_group_ids = {g.id: descendant_group_ids(g.id) for g in groups}
+        members_by_group = {
+            g.id: [shot_brief(s) for s in shots if s.group_id in member_group_ids[g.id]]
+            for g in groups
+        }
+
+        proposal_dicts = [
+            {
+                "id": p.id,
+                "subject_id": p.subject_id,
+                "group_id": p.group_id,
+                "shot_id": p.shot_id,
+                "author": p.author,
+                "reason": p.reason,
+                "confidence": p.confidence,
+                "state": p.state,
+            }
+            for p in proposals
+        ]
+        proposals_by_group: dict[int, list[dict]] = {}
+        for p in proposal_dicts:
+            if p["group_id"] is not None:
+                proposals_by_group.setdefault(p["group_id"], []).append(p)
+
+        def active_proposal_for(group_id: int) -> dict | None:
+            ps = proposals_by_group.get(group_id, [])
+            approved = [p for p in ps if p["state"] == "approved"]
+            if approved:
+                return approved[-1]  # newest approved (consistent with references.py)
+            suggested = [p for p in ps if p["state"] == "suggested"]
+            return suggested[-1] if suggested else None
+
+        active_by_group = {g.id: active_proposal_for(g.id) for g in groups}
+
         suggestion_rows = (
             session.query(NameSuggestion).filter_by(asset_id=asset_id).order_by(NameSuggestion.id).all()
         )
@@ -163,6 +212,13 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                     ),
                     "reference_state": proposal_state.get(g.id, "none"),
                     "approved_reference_shot_id": proposal_ref.get(g.id),
+                    "all_members": members_by_group[g.id],
+                    "active_proposal": active_by_group[g.id],
+                    "reference_history": [
+                        p
+                        for p in proposals_by_group.get(g.id, [])
+                        if active_by_group[g.id] is None or p["id"] != active_by_group[g.id]["id"]
+                    ],
                 }
                 for g in groups
             ],
@@ -173,19 +229,7 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                 shot_brief(s) for s in shots if s.group_id is None
             ],
             "shots": [shot_brief(s) for s in shots],
-            "reference_proposals": [
-                {
-                    "id": p.id,
-                    "subject_id": p.subject_id,
-                    "group_id": p.group_id,
-                    "shot_id": p.shot_id,
-                    "author": p.author,
-                    "reason": p.reason,
-                    "confidence": p.confidence,
-                    "state": p.state,
-                }
-                for p in proposals
-            ],
+            "reference_proposals": proposal_dicts,
             "name_suggestions": [
                 {
                     "id": s.id,

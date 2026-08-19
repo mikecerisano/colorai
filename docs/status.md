@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 370 tests passing.
+Current progress. 374 tests passing.
 
 ## Done
 
@@ -142,7 +142,11 @@ Current progress. 370 tests passing.
   view. Lighting variants are now created/selected from the sidebar, shots
   can be batched into a setup from the inbox ("make setup from selected" /
   "add selected to setup"), and each correction thumb offers a before/after
-  toggle backed by `/shots/{id}/original.png` (the uncorrected still).
+  toggle backed by `/shots/{id}/original.png` (the uncorrected still). A
+  setup's Corrections panel includes its variant shots (not just direct
+  shots), and the reference panel shows the *effective* proposal — the
+  approved one, otherwise the newest suggested — with rejected/older proposals
+  collapsed into a history list.
 - **Temporal QC** — `qc.py` detects frame-to-frame flicker, per-shot clipped
   highlights / crushed blacks (from stored luma percentiles), and blank /
   duplicate damaged-frame signatures; exposed via MCP. Reports carry
@@ -179,7 +183,7 @@ Current progress. 370 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 370 tests across timecode, project model, migrations (incl. legacy
+- 374 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
   auto-assignment), correction, LUT/curve, render, resumability, editorial,
   references, matching (incl. variants), analysis, face (incl. bbox), skin,

@@ -160,3 +160,119 @@ def test_reference_approval_reflected_in_setup_badge(tmp_path):
     setup = next(s for s in ws["setups"] if s["id"] == g["id"])
     assert setup["reference_state"] == "approved"
     assert setup["approved_reference_shot_id"] == shots[0].id
+
+
+def test_parent_setup_all_members_include_variant_shots(tmp_path):
+    client, asset, shots, alice, bob = _client(tmp_path)
+
+    setup = client.post(
+        f"/api/assets/{asset.id}/groups",
+        json={"name": "interview", "kind": "setup", "camera": "A"},
+    ).json()
+    variant = client.post(
+        f"/api/assets/{asset.id}/groups",
+        json={"name": "golden hour", "kind": "variant", "parent_id": setup["id"]},
+    ).json()
+
+    client.put(f"/api/shots/{shots[0].id}/group", json={"group_id": setup["id"]})
+    client.put(f"/api/shots/{shots[1].id}/group", json={"group_id": variant["id"]})
+    client.post(
+        f"/api/shots/{shots[1].id}/corrections",
+        json={"kind": "exposure", "parameters": {"gain": 1.1}},
+    )
+
+    ws = client.get(f"/api/assets/{asset.id}/workspace").json()
+    setup_ws = next(s for s in ws["setups"] if s["id"] == setup["id"])
+    assert set(m["id"] for m in setup_ws["all_members"]) == {shots[0].id, shots[1].id}
+
+    variant_member = next(m for m in setup_ws["all_members"] if m["id"] == shots[1].id)
+    assert variant_member["corrections"][0]["kind"] == "exposure"
+
+    # A variant's own member set is just its direct shots.
+    variant_ws = next(s for s in ws["setups"] if s["id"] == variant["id"])
+    assert [m["id"] for m in variant_ws["all_members"]] == [shots[1].id]
+
+
+def test_active_proposal_skips_rejected_and_uses_newest_suggested(tmp_path):
+    client, asset, shots, alice, bob = _client(tmp_path)
+    setup = client.post(
+        f"/api/assets/{asset.id}/groups",
+        json={"name": "interview", "kind": "setup"},
+    ).json()
+    client.put(f"/api/shots/{shots[0].id}/group", json={"group_id": setup["id"]})
+    client.put(f"/api/shots/{shots[1].id}/group", json={"group_id": setup["id"]})
+
+    first = client.post(
+        f"/api/assets/{asset.id}/reference-proposals",
+        json={"shot_id": shots[0].id, "reason": "first", "confidence": 0.5, "group_id": setup["id"]},
+    ).json()
+    client.post(f"/api/reference-proposals/{first['id']}/reject")
+
+    second = client.post(
+        f"/api/assets/{asset.id}/reference-proposals",
+        json={"shot_id": shots[1].id, "reason": "second", "confidence": 0.8, "group_id": setup["id"]},
+    ).json()
+
+    ws = client.get(f"/api/assets/{asset.id}/workspace").json()
+    setup_ws = next(s for s in ws["setups"] if s["id"] == setup["id"])
+    assert setup_ws["active_proposal"]["shot_id"] == shots[1].id
+    assert setup_ws["active_proposal"]["state"] == "suggested"
+    assert first["id"] in [h["id"] for h in setup_ws["reference_history"]]
+    assert second["id"] not in [h["id"] for h in setup_ws["reference_history"]]
+
+    client.post(f"/api/reference-proposals/{second['id']}/approve")
+    ws = client.get(f"/api/assets/{asset.id}/workspace").json()
+    setup_ws = next(s for s in ws["setups"] if s["id"] == setup["id"])
+    assert setup_ws["active_proposal"]["state"] == "approved"
+    assert setup_ws["active_proposal"]["shot_id"] == shots[1].id
+
+
+def test_active_proposal_prefers_approved_over_newer_suggested(tmp_path):
+    client, asset, shots, alice, bob = _client(tmp_path)
+    setup = client.post(
+        f"/api/assets/{asset.id}/groups",
+        json={"name": "interview", "kind": "setup"},
+    ).json()
+    client.put(f"/api/shots/{shots[0].id}/group", json={"group_id": setup["id"]})
+    client.put(f"/api/shots/{shots[1].id}/group", json={"group_id": setup["id"]})
+
+    first = client.post(
+        f"/api/assets/{asset.id}/reference-proposals",
+        json={"shot_id": shots[0].id, "reason": "approved hero", "confidence": 0.9, "group_id": setup["id"]},
+    ).json()
+    client.post(f"/api/reference-proposals/{first['id']}/approve")
+
+    newer = client.post(
+        f"/api/assets/{asset.id}/reference-proposals",
+        json={"shot_id": shots[1].id, "reason": "newer suggestion", "confidence": 0.7, "group_id": setup["id"]},
+    ).json()
+
+    ws = client.get(f"/api/assets/{asset.id}/workspace").json()
+    setup_ws = next(s for s in ws["setups"] if s["id"] == setup["id"])
+    assert setup_ws["active_proposal"]["shot_id"] == shots[0].id
+    assert setup_ws["active_proposal"]["state"] == "approved"
+    assert newer["id"] in [h["id"] for h in setup_ws["reference_history"]]
+
+
+def test_index_renders_with_variant_and_reference(tmp_path):
+    client, asset, shots, alice, bob = _client(tmp_path)
+    setup = client.post(
+        f"/api/assets/{asset.id}/groups",
+        json={"name": "interview", "kind": "setup"},
+    ).json()
+    variant = client.post(
+        f"/api/assets/{asset.id}/groups",
+        json={"name": "evening", "kind": "variant", "parent_id": setup["id"]},
+    ).json()
+    client.put(f"/api/shots/{shots[0].id}/group", json={"group_id": setup["id"]})
+    client.put(f"/api/shots/{shots[1].id}/group", json={"group_id": variant["id"]})
+    client.post(
+        f"/api/assets/{asset.id}/reference-proposals",
+        json={"shot_id": shots[0].id, "reason": "hero", "confidence": 0.9, "group_id": setup["id"]},
+    )
+
+    r = client.get("/")
+    assert r.status_code == 200
+    body = r.text
+    assert "Reference candidate" in body
+    assert "evening" in body

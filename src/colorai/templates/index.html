@@ -127,28 +127,39 @@
             {% else %}<span class="badge">no reference</span>{% endif %}
           </h2>
 
-          {% set refs = ws.reference_proposals | selectattr('group_id','equalto',setup.id) | list %}
-          {% if refs %}
+          {% set ref = setup.active_proposal %}
+          {% if ref %}
           <div class="ref-panel">
             <div class="muted" style="margin-bottom:0.5rem">Reference candidate</div>
             <div class="ref-large">
-              {% set ref_shot = refs[0].shot_id %}
-              <img src="/shots/{{ ref_shot }}/preview.png" alt="reference shot {{ ref_shot }}">
+              <img src="/shots/{{ ref.shot_id }}/preview.png" alt="reference shot {{ ref.shot_id }}">
               <div style="flex:1">
                 <div class="row">
-                  <span class="badge {{ 'approved' if refs[0].state=='approved' else 'suggested' }}">{{ refs[0].state }}</span>
-                  <span>shot {{ ref_shot }} · conf {{ refs[0].confidence }}</span>
+                  <span class="badge {{ 'approved' if ref.state=='approved' else 'suggested' }}">{{ ref.state }}</span>
+                  <span>shot {{ ref.shot_id }} · conf {{ ref.confidence }}</span>
                 </div>
-                <p class="muted">{{ refs[0].reason }}</p>
-                {% if refs[0].state == "suggested" %}
-                <button type="button" onclick="approveRef({{ refs[0].id }})">Approve</button>
-                <button type="button" onclick="rejectRef({{ refs[0].id }})">Reject</button>
+                <p class="muted">{{ ref.reason }}</p>
+                {% if ref.state == "suggested" %}
+                <button type="button" onclick="approveRef({{ ref.id }})">Approve</button>
+                <button type="button" onclick="rejectRef({{ ref.id }})">Reject</button>
                 {% endif %}
               </div>
             </div>
           </div>
           {% else %}
           <p class="muted">No reference proposed yet — have the agent propose one, or pick a shot.</p>
+          {% endif %}
+
+          {% if setup.reference_history %}
+          <details class="ref-history" style="margin-top:0.4rem">
+            <summary class="muted">Reference history ({{ setup.reference_history|length }})</summary>
+            {% for h in setup.reference_history %}
+            <div class="row" style="margin-top:0.3rem">
+              <span class="badge {{ h.state }}">{{ h.state }}</span>
+              <span class="muted">shot {{ h.shot_id }} · conf {{ h.confidence }} — {{ h.reason }}</span>
+            </div>
+            {% endfor %}
+          </details>
           {% endif %}
 
           {% set direct = ws.shots | selectattr('group_id','equalto',setup.id) | list %}
@@ -180,8 +191,7 @@
 
           <!-- corrections (approve/enable + before/after) -->
           <h2>Corrections</h2>
-          {% set all_members = ws.shots | selectattr('group_id','equalto',setup.id) | list %}
-          {% for v in ws.setups if v.parent_id == setup.id %}{% set all_members = all_members + (ws.shots | selectattr('group_id','equalto',v.id) | list) %}{% endfor %}
+          {% set all_members = setup.all_members %}
           {% set any_corr = all_members | selectattr('corrections') | list %}
           {% if not any_corr %}<p class="muted">No corrections proposed in this setup.</p>{% endif %}
           {% for s in all_members if s.corrections %}
