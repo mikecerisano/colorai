@@ -10,7 +10,7 @@ boring, battle-tested infrastructure.
 | Package | Constraint | Role | Reused vs built |
 | --- | --- | --- | --- |
 | numpy | `>=1.26,<3` | array math for metrics and (future) transforms | reused |
-| opencv-python | `>=4.9,<6` | image I/O, color conversion, cv2 backend for scene detect | reused |
+| opencv-contrib-python | `>=4.9,<6` | image I/O, color conversion, YuNet detector, cv2 backend for scene detect | reused |
 | pydantic | `>=2.6,<3` | (reserved) typed config/validation surface | reused |
 | pillow | `>=10,<12` | still image decode/encode in tests and tooling | reused |
 | scenedetect | `>=0.7,<1` | content-based shot detection | reused |
@@ -24,6 +24,9 @@ Web extra: `fastapi`, `uvicorn[standard]`, `jinja2`, `python-multipart` — the
 review UI.
 
 Dev extra: `pytest`, `pytest-cov`, `httpx` (FastAPI test client).
+
+Face extra: `mediapipe` — FaceMesh landmark sampling for precise skin tone.
+It is optional; without it, `face.py` falls back to YuNet bounding boxes.
 
 ## External tools (not pip)
 
@@ -54,8 +57,9 @@ Dev extra: `pytest`, `pytest-cov`, `httpx` (FastAPI test client).
 - **scikit-image / scikit-learn** — aspirational (listed in the original
   dependency probe) but not yet needed; add when a concrete algorithm requires
   them rather than pre-emptively.
-- **A generative-restoration model** — the tier is stubbed pending model
-  selection (`research-notes.md`); deterministic recovery needs no model.
+- **Generative-restoration models** — decided (RIFE temporal + LaMa spatial,
+  ONNX) but not bundled; the loader reads `COLORAI_GENERATIVE_MODEL_DIR` and
+  the deterministic tier needs no model (`research-notes.md`).
 - **OpenColorIO / Resolve APIs** — future integration targets, documented in
   `research-notes.md`, not yet dependencies.
 

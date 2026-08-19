@@ -101,6 +101,15 @@ def test_extract_frame_black_and_white(hardcut_video, tmp_path):
 
 
 @requires_ffmpeg
+def test_extract_frame_seek_path(hardcut_video, tmp_path):
+    # fps enables the fast input-seek path; it must still land on the right frame.
+    black = extract_frame(hardcut_video, 0, tmp_path / "s_black.png", fps=25.0)
+    white = extract_frame(hardcut_video, 50, tmp_path / "s_white.png", fps=25.0)
+    assert cv2.imread(str(black)).mean() < 5
+    assert cv2.imread(str(white)).mean() > 250
+
+
+@requires_ffmpeg
 def test_extract_representative_frames_sharpest_selector(sharp_flat_video, tmp_path):
     store = ProjectStore.create(":memory:")
     project = store.create_project("sharpest test")

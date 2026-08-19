@@ -96,10 +96,9 @@ docs/                architecture, status, audit, research notes
 
 ## Current gaps (do not assume they exist)
 
-- Generative restoration tier (deterministic recovery exists; the local model
-  is not yet selected — see `docs/research-notes.md`).
-- Seek-optimized still extraction for long-form media.
-- A stronger face model than the bundled YuNet, if the workflow demands it.
+- Install/bundle the generative models (RIFE + LaMa ONNX) and wire the loader
+  (`docs/research-notes.md`); deterministic recovery is complete.
+- Any future schema change needs a new Alembic revision (machinery exists).
 
 ## Schema migrations
 

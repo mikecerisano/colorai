@@ -42,15 +42,15 @@ reference still), not just equalize statistics.
 
 ## 3. Skin segmentation
 
-- The committed `skin.py` is a **color-only YCrCb heuristic** (Chai & Ngan
-  1999), intentionally a placeholder for coverage measurement. It is not a
-  face/skin detector and will false-positive on skin-toned non-skin.
-- Production path: **face detection** (e.g. a small local detector) to locate
-  faces, then **skin-tone sampling within the detected region** (not global
-  color thresholds), so skin-hue metrics are computed where skin actually is.
-- Local/offline options to evaluate (Apple Silicon friendly): MediaPipe Face
-  Detection / Face Landmarker, OpenCV DNN with a small face model, InsightFace
-  (heavier). **to-verify**: which runs well purely on CPU/ANE on M-series.
+- Detection is real and local: OpenCV **YuNet** (bundled ONNX) finds face
+  boxes; optional **MediaPipe FaceMesh** (``colorai[face]``) adds 468
+  landmarks so skin is sampled precisely from the forehead/cheeks while
+  avoiding eyes/lips/hair. Both are wired in `face.py` behind one interface.
+- The committed `skin.py` remains a **color-only YCrCb heuristic** used to
+  select skin *pixels* within a located face region — it is not itself a
+  face detector.
+- A stronger detector (InsightFace) can be swapped in later behind the same
+  narrow interface if the workflow demands it.
 - Critical product guardrail: never "normalize every human to one skin color";
   skin metrics describe deviation, they do not prescribe a target tone.
 
@@ -58,12 +58,15 @@ reference still), not just equalize statistics.
 
 - Reserved for **genuinely damaged temporal intervals** only, never routine
   grading. Two tiers:
-  - **Deterministic** first: duplicate/nearest-good-frame, motion-compensated
-    interpolation from surrounding frames, temporal median for flicker/dead
-    pixels. No model, fully predictable.
+  - **Deterministic** (implemented in `restoration.py`): nearest-good-frame,
+    cross-dissolve blend, temporal median for flicker/dead pixels. No model,
+    fully predictable.
   - **Generative** second, only where deterministic recovery cannot restore
-    the missing image: masked inpainting / temporal diffusion limited to the
-    damaged interval, with an explicit Original/Repaired approval loop.
+    the missing image. **Model selection (decided):** **RIFE** for temporal
+    frame interpolation and **LaMa** for spatial inpainting, both ONNX and run
+    locally via ONNX Runtime on Apple Silicon (section 6). Loader reads
+    `COLORAI_GENERATIVE_MODEL_DIR`; the interface stays explicit and
+    approval-gated (Original/Repaired loop) until models are installed.
 - Flicker is often removable deterministically (temporal low-pass on a
   per-frame exposure estimate); the brief's stabilization-artifact case
   (directional blur pulse) is the harder, generative-tier case.

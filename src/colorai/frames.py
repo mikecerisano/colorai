@@ -49,30 +49,41 @@ def _candidate_indices(shot: Shot, samples: int) -> list[int]:
 
 
 def extract_frame(
-    video_path: str | Path, frame_index: int, out_path: str | Path
+    video_path: str | Path,
+    frame_index: int,
+    out_path: str | Path,
+    *,
+    fps: float | None = None,
 ) -> Path:
-    """Extract a single, frame-accurate still from ``video_path``.
+    """Extract a single still from ``video_path``.
+
+    When ``fps`` is given, uses input seek (``-ss <t>``) to jump to the target
+    timestamp and decode only a short window — fast and frame-accurate enough
+    for representative stills on long masters. Without ``fps``, falls back to
+    the exact but slow ``select=eq(n\\,N)`` path (decodes from frame 0).
 
     ``out_path`` extension determines the still format (e.g. ``.png``).
     """
     destination = Path(out_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-i",
-            str(video_path),
-            "-vf",
-            f"select=eq(n\\,{frame_index})",
-            "-frames:v",
-            "1",
-            "-y",
-            str(destination),
-        ],
-        check=True,
-    )
+    if fps:
+        timestamp = frame_index / fps
+        cmd = [
+            "ffmpeg", "-v", "error",
+            "-ss", f"{timestamp:.6f}",
+            "-i", str(video_path),
+            "-frames:v", "1",
+            "-y", str(destination),
+        ]
+    else:
+        cmd = [
+            "ffmpeg", "-v", "error",
+            "-i", str(video_path),
+            "-vf", f"select=eq(n\\,{frame_index})",
+            "-frames:v", "1",
+            "-y", str(destination),
+        ]
+    subprocess.run(cmd, check=True)
     return destination
 
 
@@ -84,7 +95,9 @@ def _choose_index(asset: MediaAsset, shot: Shot, selector: str, samples: int) ->
     try:
         scores: dict[int, float] = {}
         for idx in _candidate_indices(shot, samples):
-            still = extract_frame(asset.source_path, idx, probe_dir / f"{idx}.png")
+            still = extract_frame(
+                asset.source_path, idx, probe_dir / f"{idx}.png", fps=asset.frame_rate
+            )
             image = cv2.imread(str(still), cv2.IMREAD_COLOR)
             scores[idx] = frame_sharpness(image) if image is not None else 0.0
         return select_sharpest(scores)
@@ -113,7 +126,7 @@ def extract_representative_frames(
         for shot in shots:
             index = _choose_index(asset, shot, selector, samples)
             out = stills / f"shot_{shot.index:04d}_frame_{index:06d}.png"
-            extract_frame(asset.source_path, index, out)
+            extract_frame(asset.source_path, index, out, fps=asset.frame_rate)
             rf = make_representative_frame(
                 shot, index, image_path=str(out), frame_rate=asset.frame_rate
             )

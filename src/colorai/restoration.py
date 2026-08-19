@@ -131,12 +131,17 @@ def propose_restoration(
 def generative_restore(*args, **kwargs) -> np.ndarray:  # noqa: ANN002, ANN003
     """Generative reconstruction interface (NOT IMPLEMENTED).
 
-    Reserved for damaged intervals that deterministic recovery cannot repair.
-    Will require a local model, a bounded render of only the damaged interval,
-    and an Original/Repaired approval loop before insertion. See
-    ``docs/research-notes.md`` for the model-selection plan.
+    Selected local models (see ``docs/research-notes.md``):
+
+    * temporal — **RIFE** (frame interpolation) for missing/damaged frames
+    * spatial  — **LaMa** (inpainting) for damaged regions within a frame
+
+    Both run locally via ONNX Runtime on Apple Silicon. The loader will read
+    model files from ``COLORAI_GENERATIVE_MODEL_DIR``; until a model is
+    present this raises rather than falling back silently.
     """
     raise NotImplementedError(
-        "generative restoration requires a local model; deterministic recovery "
-        "primitives (blend/nearest/median) are available now"
+        "generative restoration models not installed — selected: RIFE (temporal) "
+        "and LaMa (spatial), both ONNX; deterministic recovery "
+        "(blend/nearest/median) is available now"
     )

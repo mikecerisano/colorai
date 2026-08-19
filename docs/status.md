@@ -15,9 +15,9 @@ Current progress. 184 tests passing.
   `colorai db migrate` command.
 - **Ingest** — ffprobe probing with exact rational frame-rate parsing.
 - **Shot detection** — PySceneDetect adapter, inclusive 0-based bounds.
-- **Representative frames** — frame-accurate ffmpeg extraction, with a
-  content-aware "sharpest" selector (Laplacian-variance) in addition to the
-  middle-frame default.
+- **Representative frames** — frame-accurate, seek-optimized ffmpeg
+  extraction (fast input seek), with a content-aware "sharpest" selector
+  (Laplacian-variance) in addition to the middle-frame default.
 - **Image metrics** — luma percentiles/dispersion, RGB means, saturation proxy,
   and a sharpness metric.
 - **Analysis pipeline** — `colorai analyze` runs ingest → shots → frames →
@@ -34,9 +34,10 @@ Current progress. 184 tests passing.
   the review API.
 - **Reference-image matching** — match a shot against an arbitrary reference
   still, not just the median shot.
-- **Face detection + skin sampling** — OpenCV YuNet DNN face detector (bundled
-  ~230 KB ONNX model, fully local) with skin metrics computed inside detected
-  face regions; plus the color-only YCrCb skin heuristic.
+- **Face detection + skin sampling** — OpenCV YuNet detector (bundled ONNX,
+  fully local) plus optional MediaPipe FaceMesh landmarks (`colorai[face]`) for
+  precise forehead/cheek skin sampling; color-only YCrCb heuristic for pixel
+  selection.
 - **Restoration** — deterministic primitives (cross-dissolve, temporal median,
   nearest-good-frame) and a proposal boundary; generative tier is an explicit,
   approval-gated interface awaiting a local model.
@@ -45,10 +46,8 @@ Current progress. 184 tests passing.
 
 ## Not yet done (next)
 
-- Implement the generative restoration tier (deterministic recovery is done;
-  model selection is the open item — see `research-notes.md`).
-- Seek-optimized still extraction for long-form media.
-- A stronger face model than YuNet, if the workflow demands it.
+- Install/bundle the generative models (RIFE + LaMa ONNX) and wire the loader
+  (model selection is decided; the deterministic tier is complete).
 - New Alembic revisions for any future schema changes (the machinery exists).
 
 ## Verified
