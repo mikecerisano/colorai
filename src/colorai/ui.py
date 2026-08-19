@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import cv2
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -29,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from colorai.correction import load_corrected_still, normalize_parameters, validate_correction
+from colorai.organization import ShotEvidence, suggest_organization
 from colorai.project.models import (
     Correction,
     FrameMetrics,
@@ -75,6 +76,9 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
             .order_by(Shot.index, SkinMetric.face_index)
             .all()
         )
+        faces_by_shot: dict[int, list[SkinMetric]] = {}
+        for m in face_rows:
+            faces_by_shot.setdefault(m.shot_id, []).append(m)
         metric_rows = (
             session.query(FrameMetrics)
             .join(Shot, FrameMetrics.shot_id == Shot.id)
@@ -179,6 +183,55 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
 
         active_by_group = {g.id: active_proposal_for(g.id) for g in groups}
 
+        # Organization suggestions: deterministic buckets over the
+        # group-less, non-excused queue (excused = dismissed / intentional).
+        org_queue = [s for s in shots if s.group_id is None and not s.excused]
+        dismissed = [s for s in shots if s.group_id is None and s.excused]
+        subject_names = {s.id: s.name for s in subjects}
+        org_result = suggest_organization(
+            [
+                ShotEvidence(
+                    shot_id=s.id,
+                    index=s.index,
+                    face_subject_ids=tuple(
+                        m.subject_id for m in faces_by_shot.get(s.id, [])
+                    ),
+                )
+                for s in org_queue
+            ],
+            subject_names,
+        )
+        briefs_by_id = {b["id"]: b for b in [shot_brief(s) for s in shots]}
+        organization = {
+            "queue_shot_ids": [s.id for s in org_queue],
+            "interview_clusters": [
+                {
+                    "id": c.id,
+                    "label": c.label,
+                    "reason": c.reason,
+                    "subject_id": c.subject_id,
+                    "subject_name": c.subject_name,
+                    "representative_shot_id": c.representative_shot_id,
+                    "members": [briefs_by_id[sid] for sid in c.member_shot_ids],
+                }
+                for c in org_result.interview_clusters
+            ],
+            "broll_shots": [briefs_by_id[sid] for sid in org_result.broll_shot_ids],
+            "judgment": [
+                {
+                    "shot_id": j.shot_id,
+                    "reasons": list(j.reasons),
+                    "subject_ids": list(j.subject_ids),
+                    "subject_names": [
+                        subject_names.get(sid, f"subject {sid}") for sid in j.subject_ids
+                    ],
+                    "shot": briefs_by_id[j.shot_id],
+                }
+                for j in org_result.judgment
+            ],
+            "dismissed_shots": [briefs_by_id[s.id] for s in dismissed],
+        }
+
         suggestion_rows = (
             session.query(NameSuggestion).filter_by(asset_id=asset_id).order_by(NameSuggestion.id).all()
         )
@@ -229,6 +282,7 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                 shot_brief(s) for s in shots if s.group_id is None
             ],
             "shots": [shot_brief(s) for s in shots],
+            "organization": organization,
             "reference_proposals": proposal_dicts,
             "name_suggestions": [
                 {
@@ -328,6 +382,13 @@ class GroupUpdate(BaseModel):
 
 class GroupAssign(BaseModel):
     group_id: int
+
+
+class OrganizeIn(BaseModel):
+    action: Literal["create_setup", "assign", "dismiss", "restore"]
+    shot_ids: list[int]
+    name: str | None = None
+    group_id: int | None = None
 
 
 class ReferenceProposalIn(BaseModel):
@@ -544,6 +605,65 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
         if shot is None:
             raise HTTPException(status_code=404, detail="shot not found")
         return {"id": shot.id, "group_id": shot.group_id}
+
+    # -- needs-organization bulk actions ------------------------------------
+
+    @app.post("/api/assets/{asset_id}/organize", status_code=200)
+    def organize_endpoint(asset_id: int, payload: OrganizeIn):
+        """Bulk organization actions over the needs-organization queue.
+
+        ``create_setup`` builds a setup group named ``name`` and assigns the
+        shots; ``assign`` adds shots to an existing group; ``dismiss`` marks
+        shots as intentional non-setup material (``excused``); ``restore``
+        undoes that. Only the requested shots are touched — existing group
+        assignments elsewhere are never moved implicitly.
+        """
+        from colorai.editorial import assign_shot_group, create_group, set_excused
+
+        shot_ids = list(dict.fromkeys(payload.shot_ids))
+        if not shot_ids:
+            raise HTTPException(status_code=400, detail="shot_ids must not be empty")
+        with store.session() as session:
+            if session.get(MediaAsset, asset_id) is None:
+                raise HTTPException(status_code=404, detail="asset not found")
+            found = {
+                s.id
+                for s in session.query(Shot)
+                .filter(Shot.id.in_(shot_ids), Shot.asset_id == asset_id)
+                .all()
+            }
+            if found != set(shot_ids):
+                raise HTTPException(
+                    status_code=400, detail="one or more shots do not belong to this asset"
+                )
+
+        if payload.action == "create_setup":
+            name = (payload.name or "").strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="create_setup requires a name")
+            group_id = create_group(store, asset_id, name, kind="setup").id
+        elif payload.action == "assign":
+            if payload.group_id is None:
+                raise HTTPException(status_code=400, detail="assign requires a group_id")
+            with store.session() as session:
+                group = session.get(ShotGroup, payload.group_id)
+                if group is None or group.asset_id != asset_id:
+                    raise HTTPException(status_code=400, detail="group not found for this asset")
+                group_id = group.id
+        else:
+            group_id = None
+
+        moved = 0
+        for shot_id in shot_ids:
+            if payload.action in ("create_setup", "assign"):
+                shot = assign_shot_group(store, shot_id, group_id)
+            elif payload.action == "dismiss":
+                shot = set_excused(store, shot_id, True)
+            else:
+                shot = set_excused(store, shot_id, False)
+            if shot is not None:
+                moved += 1
+        return {"action": payload.action, "shots": moved, "group_id": group_id}
 
     # -- reference proposals ------------------------------------------------
 

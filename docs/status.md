@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 374 tests passing.
+Current progress. 390 tests passing.
 
 ## Done
 
@@ -147,6 +147,18 @@ Current progress. 374 tests passing.
   shots), and the reference panel shows the *effective* proposal — the
   approved one, otherwise the newest suggested — with rejected/older proposals
   collapsed into a history list.
+- **Needs-organization workspace** — the review UI replaces the flat "Inbox"
+  timecode checklist with a visual, thumbnail-led organization screen. Shots
+  without a setup are classified (deterministically, from persisted face/
+  subject evidence) into three buckets: *interview/setup candidates* (same-
+  subject, temporally adjacent clusters with a suggested label and reason),
+  *b-roll / non-interview* (no detected faces — markable as intentional), and
+  *needs judgment* (multi-person or weak/no identity evidence). Clusters
+  offer "Create setup from this" / "Add to setup" / "Dismiss"; a manual batch
+  bar stays available as a secondary path. Suggestions are read-only —
+  nothing is auto-grouped, excused, or graded — and bulk actions go through
+  `POST /api/assets/{id}/organize` (`create_setup` / `assign` / `dismiss` /
+  `restore`). See `colorai/organization.py`.
 - **Temporal QC** — `qc.py` detects frame-to-frame flicker, per-shot clipped
   highlights / crushed blacks (from stored luma percentiles), and blank /
   duplicate damaged-frame signatures; exposed via MCP. Reports carry
@@ -183,7 +195,7 @@ Current progress. 374 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 374 tests across timecode, project model, migrations (incl. legacy
+- 390 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
   auto-assignment), correction, LUT/curve, render, resumability, editorial,
   references, matching (incl. variants), analysis, face (incl. bbox), skin,

@@ -49,6 +49,11 @@
     .subject { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0.65rem 0.75rem; margin-bottom:0.85rem; }
     .subject .head { display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.5rem; }
     .inbox-item { display:flex; align-items:center; gap:0.5rem; padding:0.4rem 0; border-bottom:1px solid var(--line); font-size:0.8rem; }
+    .org-bar { position:sticky; top:0; background:var(--bg); padding:0.4rem 0; border-bottom:1px solid var(--line); z-index:2; }
+    .org-cluster { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0.7rem; margin-bottom:0.85rem; }
+    .org-judgment { display:flex; gap:0.8rem; align-items:flex-start; background:var(--panel2); border:1px solid #6b5626; border-radius:8px; padding:0.7rem; margin-bottom:0.6rem; }
+    .org-judgment img { width:200px; max-width:40%; border-radius:6px; border:1px solid var(--line); background:#000; }
+    .org-check { display:flex; gap:0.35rem; align-items:center; padding:0.35rem 0.55rem; font-size:0.72rem; color:var(--muted); cursor:pointer; }
     .sug { display:flex; align-items:flex-start; gap:0.7rem; padding:0.5rem; border:1px solid var(--line); border-radius:8px; margin-bottom:0.5rem; background:var(--panel2); }
     .sug img { height:96px; border:1px solid var(--line); border-radius:4px; background:#000; }
     .hidden { display:none; }
@@ -111,7 +116,7 @@
       <div class="tabs">
         <button type="button" class="tab active" id="tab-setups" onclick="showTab('setups')">Setups</button>
         <button type="button" class="tab" id="tab-faces" onclick="showTab('faces')">Face review</button>
-        <button type="button" class="tab" id="tab-inbox" onclick="showTab('inbox')">Inbox</button>
+        <button type="button" class="tab" id="tab-inbox" onclick="showTab('inbox')">Needs organization</button>
       </div>
 
       <!-- Setups workspace -->
@@ -274,27 +279,6 @@
         </div>
         {% endfor %}
         <button type="button" onclick="newSubject()">+ New subject</button>
-      </section>
-
-      <!-- Inbox -->
-      <section id="tab-inbox-pane" class="hidden">
-        <h2>Unassigned shots</h2>
-        {% if not ws.unassigned_shots %}<p class="muted">None.</p>{% endif %}
-        {% for s in ws.unassigned_shots %}
-        <div class="inbox-item">
-          <input type="checkbox" class="shot-select" value="{{ s.id }}">
-          <span>shot {{ s.index }} · {{ s.start_tc }} → {{ s.end_tc }}</span>
-        </div>
-        {% endfor %}
-        {% if ws.unassigned_shots %}
-        <div class="row" style="margin-top:0.5rem">
-          <button type="button" onclick="createSetupFromSelected()">Make setup from selected</button>
-          <select id="batch-setup-target" style="width:10rem">
-            {% for g in ws.setups %}<option value="{{ g.id }}">{{ g.name }}{% if g.camera %} ({{ g.camera }}){% endif %}</option>{% endfor %}
-          </select>
-          <button type="button" onclick="addSelectedToSetup()">Add selected to setup</button>
-        </div>
-        {% endif %}
 
         <h2>Unassigned faces</h2>
         {% if not ws.unassigned_faces %}<p class="muted">None.</p>{% endif %}
@@ -332,6 +316,112 @@
           </div>
         </div>
         {% endfor %}
+      </section>
+
+      <!-- Needs organization -->
+      <section id="tab-inbox-pane" class="hidden">
+        {% set org = ws.organization %}
+        {% if not org.queue_shot_ids and not org.dismissed_shots %}<p class="muted">Nothing needs organization.</p>{% endif %}
+
+        {% if org.queue_shot_ids %}
+        <div class="org-bar row">
+          <span class="muted" id="org-selected-count">0 selected</span>
+          <select id="batch-setup-target" style="width:12rem">
+            {% for g in ws.setups %}<option value="{{ g.id }}">{{ g.name }}{% if g.camera %} ({{ g.camera }}){% endif %}{% if g.parent_id is not none %} · variant{% endif %}</option>{% endfor %}
+          </select>
+          <button type="button" onclick="addSelectedToSetup()">Add selected to setup</button>
+          <button type="button" onclick="createSetupFromSelected()">Make setup from selected</button>
+          <button type="button" onclick="dismissSelected()">Dismiss selected</button>
+        </div>
+        {% endif %}
+
+        <!-- Interview/setup candidates -->
+        <h2>Interview / setup candidates</h2>
+        {% if not org.interview_clusters %}<p class="muted">None.</p>{% endif %}
+        {% for c in org.interview_clusters %}
+        <div class="org-cluster" data-cluster="{{ c.id }}" data-member-ids="{{ c.members | map(attribute='id') | join(',') }}">
+          <div class="row">
+            <span class="badge suggested">suggested</span>
+            <span class="name">{{ c.label }}</span>
+            <span class="badge">{{ c.subject_name }}</span>
+          </div>
+          <p class="muted">{{ c.reason }}</p>
+          <div class="filmstrip">
+            {% for s in c.members %}
+            <div class="shot-thumb" data-shot="{{ s.id }}">
+              <img src="/shots/{{ s.id }}/preview.png" alt="shot {{ s.index }}">
+              <label class="org-check">
+                <input type="checkbox" class="shot-select" value="{{ s.id }}" onchange="updateSelected()">
+                shot {{ s.index }} · {{ s.start_tc }}{% if s.id == c.representative_shot_id %} · rep{% endif %}
+              </label>
+            </div>
+            {% endfor %}
+          </div>
+          <div class="row" style="margin-top:0.5rem">
+            <button type="button" onclick="createSetupFromCluster('{{ c.id }}')">Create setup from this</button>
+            <select id="cluster-target-{{ c.id }}" style="width:12rem">
+              {% for g in ws.setups if g.parent_id is none %}<option value="{{ g.id }}">{{ g.name }}{% if g.camera %} ({{ g.camera }}){% endif %}</option>{% endfor %}
+            </select>
+            <button type="button" onclick="addClusterToSetup('{{ c.id }}')">Add to setup</button>
+            <button type="button" onclick="dismissCluster('{{ c.id }}')">Dismiss / keep unorganized</button>
+          </div>
+        </div>
+        {% endfor %}
+
+        <!-- B-roll / non-interview -->
+        <h2>B-roll / non-interview</h2>
+        {% if not org.broll_shots %}<p class="muted">None.</p>{% endif %}
+        <div class="filmstrip">
+          {% for s in org.broll_shots %}
+          <div class="shot-thumb" data-shot="{{ s.id }}">
+            <img src="/shots/{{ s.id }}/preview.png" alt="shot {{ s.index }}">
+            <div class="meta">
+              shot {{ s.index }} · {{ s.start_tc }}
+              <label class="org-check"><input type="checkbox" class="shot-select" value="{{ s.id }}" onchange="updateSelected()"> select</label>
+              <button type="button" onclick="dismissShots([{{ s.id }}])">Mark intentional</button>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+
+        <!-- Needs judgment -->
+        <h2>Needs judgment</h2>
+        {% if not org.judgment %}<p class="muted">None.</p>{% endif %}
+        {% for j in org.judgment %}
+        <div class="org-judgment">
+          <img src="/shots/{{ j.shot_id }}/preview.png" alt="shot {{ j.shot.index }}">
+          <div style="flex:1">
+            <div class="row">
+              <span class="badge needs-review">needs judgment</span>
+              <span>shot {{ j.shot.index }} · {{ j.shot.start_tc }}</span>
+              {% for n in j.subject_names %}<span class="badge">{{ n }}</span>{% endfor %}
+              <label class="org-check"><input type="checkbox" class="shot-select" value="{{ j.shot_id }}" onchange="updateSelected()"></label>
+            </div>
+            {% for r in j.reasons %}<div class="muted">{{ r }}</div>{% endfor %}
+            <div class="row" style="margin-top:0.4rem">
+              <select id="judgment-target-{{ j.shot_id }}" style="width:12rem">
+                <option value="">Add to setup…</option>
+                {% for g in ws.setups %}<option value="{{ g.id }}">{{ g.name }}{% if g.camera %} ({{ g.camera }}){% endif %}</option>{% endfor %}
+              </select>
+              <button type="button" onclick="assignFromSelect({{ j.shot_id }}, 'judgment-target-{{ j.shot_id }}')">Assign</button>
+              <button type="button" onclick="dismissShots([{{ j.shot_id }}])">Dismiss / keep unorganized</button>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+
+        {% if org.dismissed_shots %}
+        <details class="ref-history" style="margin-top:1rem">
+          <summary class="muted">Dismissed / intentional ({{ org.dismissed_shots|length }})</summary>
+          {% for s in org.dismissed_shots %}
+          <div class="row" style="margin-top:0.3rem">
+            <span class="badge intentional">intentional</span>
+            <span class="muted">shot {{ s.index }} · {{ s.start_tc }}</span>
+            <button type="button" onclick="dismissShots([{{ s.id }}], true)">Restore</button>
+          </div>
+          {% endfor %}
+        </details>
+        {% endif %}
       </section>
     </main>
   </div>
@@ -406,28 +496,64 @@
       if (sid) { await request(`/api/name-suggestions/${id}/assign`, 'POST', {subject_id: Number(sid)}); location.reload(); }
     }
 
-    // -- batch setup --------------------------------------------------------
+    // -- needs organization -------------------------------------------------
     async function assignShotToGroup(shotId, groupId) {
       await request(`/api/shots/${shotId}/group`, 'PUT', {group_id: groupId});
     }
     function selectedShotIds() {
       return [...document.querySelectorAll('.shot-select:checked')].map(c => Number(c.value));
     }
+    function updateSelected() {
+      document.getElementById('org-selected-count').textContent = selectedShotIds().length + ' selected';
+    }
+    async function organize(action, body) {
+      if (ASSET_ID === null) return;
+      await request(`/api/assets/${ASSET_ID}/organize`, 'POST', {...body, action});
+      location.reload();
+    }
     async function createSetupFromSelected() {
       const ids = selectedShotIds();
       if (!ids.length) { alert('Select shots first'); return; }
       const name = prompt('Setup name');
-      if (!name || ASSET_ID === null) return;
-      const res = await request(`/api/assets/${ASSET_ID}/groups`, 'POST', {name, kind:'setup'});
-      const g = await res.json();
-      for (const id of ids) await assignShotToGroup(id, g.id);
-      location.reload();
+      if (!name) return;
+      await organize('create_setup', {name, shot_ids: ids});
     }
     async function addSelectedToSetup() {
       const ids = selectedShotIds();
       const gid = Number(document.getElementById('batch-setup-target').value);
       if (!ids.length || !gid) { alert('Select shots and a target setup'); return; }
-      for (const id of ids) await assignShotToGroup(id, gid);
+      await organize('assign', {group_id: gid, shot_ids: ids});
+    }
+    async function dismissSelected() {
+      const ids = selectedShotIds();
+      if (!ids.length) { alert('Select shots first'); return; }
+      await organize('dismiss', {shot_ids: ids});
+    }
+    function clusterMemberIds(cid) {
+      const el = document.querySelector(`.org-cluster[data-cluster="${cid}"]`);
+      return (el.dataset.memberIds || '').split(',').map(Number).filter(Boolean);
+    }
+    async function createSetupFromCluster(cid) {
+      const labelEl = document.querySelector(`.org-cluster[data-cluster="${cid}"] .name`);
+      const name = prompt('Setup name', labelEl ? labelEl.textContent.trim() : '');
+      if (!name) return;
+      await organize('create_setup', {name, shot_ids: clusterMemberIds(cid)});
+    }
+    async function addClusterToSetup(cid) {
+      const gid = Number(document.getElementById('cluster-target-'+cid).value);
+      if (!gid) { alert('Pick a setup first'); return; }
+      await organize('assign', {group_id: gid, shot_ids: clusterMemberIds(cid)});
+    }
+    async function dismissCluster(cid) {
+      await organize('dismiss', {shot_ids: clusterMemberIds(cid)});
+    }
+    async function dismissShots(ids, restore) {
+      await organize(restore ? 'restore' : 'dismiss', {shot_ids: ids});
+    }
+    async function assignFromSelect(shotId, selectId) {
+      const gid = Number(document.getElementById(selectId).value);
+      if (!gid) { alert('Pick a setup first'); return; }
+      await assignShotToGroup(shotId, gid);
       location.reload();
     }
 

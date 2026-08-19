@@ -85,7 +85,7 @@ def test_index_renders_shots(tmp_path):
     assert "shot 0" in body
     assert "shot 1" in body
     assert "00:00:00:00" in body  # first shot start timecode
-    assert "Unassigned" in body  # shots without a setup land in the inbox
+    assert "Unassigned" in body  # unassigned faces land in the face-review inbox
 
 
 def test_stills_are_served(tmp_path):
