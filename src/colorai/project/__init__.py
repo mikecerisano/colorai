@@ -9,6 +9,7 @@ from colorai.project.models import (
     RepresentativeFrame,
     Shot,
     SkinMetric,
+    Subject,
     utcnow,
 )
 from colorai.project.store import (
@@ -27,6 +28,7 @@ __all__ = [
     "RepresentativeFrame",
     "Shot",
     "SkinMetric",
+    "Subject",
     "make_representative_frame",
     "make_shots",
     "utcnow",

@@ -1,16 +1,16 @@
-"""Face detection and face-region skin sampling.
+"""Face detection, identity, and skin sampling.
 
-Two detectors sit behind one narrow interface:
+Three models sit behind narrow interfaces:
 
-* **YuNet** (OpenCV ``FaceDetectorYN``, bundled ONNX) — fast, always
-  available, gives a face bounding box.
-* **MediaPipe FaceMesh** (optional, 468 landmarks) — precise facial geometry
-  used to sample skin from the forehead and cheeks while avoiding eyes/lips/
-  hair. MediaPipe is a heavier optional dependency (``colorai[face]``); when it
-  is not installed, sampling falls back to the YuNet bounding box.
+* **YuNet** (OpenCV ``FaceDetectorYN``, bundled ONNX) — face boxes.
+* **SFace** (OpenCV ``FaceRecognizerSF``, bundled ONNX) — a 128-D *identity*
+  embedding per face, used to group shots by person rather than by skin color.
+* **MediaPipe FaceMesh** (optional, 468 landmarks) — precise forehead/cheek
+  skin sampling; a heavier optional dependency (``colorai[face]``).
 
-Skin metrics are computed only within detected face regions, which is where
-skin-tone QC should be measured. All images are HxWx3 BGR uint8.
+The persistence pipeline uses a single YuNet pass so that face boxes, skin
+samples, and identity embeddings stay aligned by index. All images are HxWx3
+BGR uint8.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from colorai.project.store import ProjectStore
 from colorai.skin import skin_mask
 
 _MODEL_PATH = Path(__file__).parent / "models" / "face_detection_yunet_2023mar.onnx"
+_SFACE_MODEL = Path(__file__).parent / "models" / "face_recognition_sface_2021dec.onnx"
 _DEFAULT_SCORE = 0.9
 
 # FaceMesh landmark indices for skin-safe regions: forehead and cheeks.
@@ -34,23 +35,88 @@ _FOREHEAD = (10, 108, 151, 337, 299, 333, 297, 301, 9, 8, 168, 6, 197, 195, 5, 4
 _CHEEKS = (234, 127, 162, 21, 54, 103, 67, 109, 116, 143, 156, 70, 63, 105, 66, 107)
 
 _face_mesh = None
+_recognizer = None
 
 
-def detect_faces(
+def _detect_raw(
     image_bgr: np.ndarray, *, score_threshold: float = _DEFAULT_SCORE
-) -> list[tuple[int, int, int, int]]:
-    """Return detected faces as ``(x, y, width, height)`` boxes (empty if none)."""
+) -> np.ndarray | None:
+    """Run YuNet; returns the raw Nx15 detection array (or ``None``)."""
     if not _MODEL_PATH.exists() or image_bgr.size == 0:
-        return []
+        return None
     height, width = image_bgr.shape[:2]
     detector = cv2.FaceDetectorYN.create(
         str(_MODEL_PATH), "", (width, height), score_threshold, 0.3, 5000
     )
     detector.setInputSize((width, height))
     _, faces = detector.detect(image_bgr)
+    return faces
+
+
+def _get_recognizer():
+    """Lazily construct the SFace recognizer, or ``None`` if unavailable."""
+    global _recognizer
+    if _recognizer is None:
+        try:
+            _recognizer = cv2.FaceRecognizerSF.create(str(_SFACE_MODEL), "")
+        except Exception:
+            _recognizer = False
+    return _recognizer if _recognizer is not False else None
+
+
+def detect_faces(
+    image_bgr: np.ndarray, *, score_threshold: float = _DEFAULT_SCORE
+) -> list[tuple[int, int, int, int]]:
+    """Return detected faces as ``(x, y, width, height)`` boxes (empty if none)."""
+    faces = _detect_raw(image_bgr, score_threshold=score_threshold)
     if faces is None:
         return []
     return [(int(x), int(y), int(fw), int(fh)) for x, y, fw, fh in faces[:, :4]]
+
+
+def _embeddings_from_raw(image_bgr: np.ndarray, faces: np.ndarray | None) -> list[np.ndarray]:
+    recognizer = _get_recognizer()
+    if faces is None or recognizer is None:
+        return []
+    embeddings: list[np.ndarray] = []
+    for face in faces:
+        aligned = recognizer.alignCrop(image_bgr, face)
+        if aligned is None or aligned.size == 0:
+            embeddings.append(np.zeros(128, dtype=np.float64))
+            continue
+        feature = recognizer.feature(aligned).flatten().astype(np.float64)
+        norm = float(np.linalg.norm(feature))
+        embeddings.append(feature / norm if norm > 0 else feature)
+    return embeddings
+
+
+def face_embeddings(image_bgr: np.ndarray) -> list[np.ndarray]:
+    """Return one L2-normalized 128-D identity embedding per detected face."""
+    return _embeddings_from_raw(image_bgr, _detect_raw(image_bgr))
+
+
+def analyze_faces(image_bgr: np.ndarray) -> list[dict]:
+    """One YuNet pass: per-face ``{bbox, skin, embedding}``.
+
+    ``skin`` is ``None`` when the box contains no skin pixels; ``embedding`` is
+    ``None`` when the recognizer is unavailable. Indices are YuNet detection
+    order, so skin rows and embeddings stay aligned.
+    """
+    faces = _detect_raw(image_bgr)
+    if faces is None:
+        return []
+    embeddings = _embeddings_from_raw(image_bgr, faces)
+    out: list[dict] = []
+    for i, face in enumerate(faces):
+        x, y, w, h = (int(v) for v in face[:4])
+        out.append(
+            {
+                "bbox": [x, y, w, h],
+                "skin": skin_metrics_in_region(image_bgr, (x, y, w, h)),
+                "embedding": embeddings[i] if i < len(embeddings) else None,
+            }
+        )
+    return out
 
 
 def _get_face_mesh():
@@ -172,7 +238,8 @@ def store_skin_metrics(
 ) -> list[Any]:
     """Compute and persist skin metrics for every face in a shot's still.
 
-    Returns the created ``SkinMetric`` rows. Mean channel values are stored
+    Uses the single YuNet pass (via :func:`analyze_faces`) so face indices stay
+    aligned with identity embeddings. Mean channel values are stored
     normalized to ``[0, 1]`` (BGR order) to match ``FrameMetrics``.
     """
     from colorai.project.models import SkinMetric
@@ -181,18 +248,21 @@ def store_skin_metrics(
     if image is None:
         raise ValueError(f"cannot read still: {image_path!r}")
 
-    metrics = face_skin_metrics(image)
+    faces = analyze_faces(image)
     rows: list[SkinMetric] = []
     with store.session() as session:
-        for face_index, m in enumerate(metrics):
-            b, g, r = m["mean_bgr"]
+        for face_index, face in enumerate(faces):
+            skin = face["skin"]
+            if skin is None:
+                continue
+            b, g, r = skin["mean_bgr"]
             row = SkinMetric(
                 shot_id=shot.id,
                 face_index=face_index,
                 mean_b=b / 255.0,
                 mean_g=g / 255.0,
                 mean_r=r / 255.0,
-                sample_pixels=int(m["sample_pixels"]),
+                sample_pixels=int(skin["sample_pixels"]),
             )
             session.add(row)
             rows.append(row)

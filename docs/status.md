@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 192 tests passing.
+Current progress. 195 tests passing.
 
 ## Done
 
@@ -34,15 +34,16 @@ Current progress. 192 tests passing.
   the review API.
 - **Reference-image matching** — match a shot against an arbitrary reference
   still, not just the median shot.
-- **Face detection + skin sampling** — OpenCV YuNet detector (bundled ONNX,
-  fully local) plus optional MediaPipe FaceMesh landmarks (`colorai[face]`) for
-  precise forehead/cheek skin sampling; color-only YCrCb heuristic for pixel
-  selection.
+- **Face detection, identity, + skin sampling** — OpenCV YuNet detector,
+  SFace identity embeddings, and optional MediaPipe FaceMesh landmarks
+  (`colorai[face]`) for precise forehead/cheek skin sampling.
 - **Skin metric persistence** — per-face `SkinMetric` rows (mean skin BGR +
   sample count) written during `analyze`, with an Alembic migration.
-- **Per-subject skin-tone matching** — faces are grouped into subjects by skin
-  color and compared against each subject's *own* median (not a global
-  median), proposing `rgb_balance` corrections only within a subject.
+- **Per-subject skin-tone matching** — faces are grouped by **identity
+  embedding** (not skin color), then compared against each subject's *own*
+  reference (hero shot or median), proposing `rgb_balance` only within a
+  subject. Subjects are human-editable: rename, reassign, merge, split, and
+  set a reference shot.
 - **Restoration** — deterministic primitives (cross-dissolve, temporal median,
   nearest-good-frame) and a proposal boundary; generative tier is an explicit,
   approval-gated interface awaiting a local model.
@@ -59,7 +60,7 @@ Current progress. 192 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 192 tests across timecode, project model, migrations, ingest, shot
+- 195 tests across timecode, project model, migrations, ingest, shot
   detection, frames, metrics, pipeline, correction, analysis, face, skin,
   skin analysis, restoration, UI, and CLI.
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45

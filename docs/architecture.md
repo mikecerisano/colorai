@@ -66,10 +66,12 @@ exhaustively round-trip tested (every frame of multiple 10-minute blocks).
 
 ```
 Project 1──n MediaAsset 1──n Shot 1──1 RepresentativeFrame
-                              │
-                              ├──n FrameMetrics   (luma/RGB/chroma statistics)
-                              ├──n SkinMetric     (per-face skin tone)
-                              └──n Correction     (kind + JSON parameters)
+         │         │
+         │         └──n Subject       (human-editable person/group)
+         │
+         └── Shot ──┬──n FrameMetrics   (luma/RGB/chroma statistics)
+                     ├──n SkinMetric     (per-face skin tone, -> Subject)
+                     └──n Correction     (kind + JSON parameters)
 ```
 
 - `MediaAsset` holds probed stream metadata (resolution, `frame_rate`, frame
@@ -143,8 +145,10 @@ match a shot against an arbitrary reference still (`feature_from_image`).
 Proposals are data; nothing is applied without approval.
 
 `src/colorai/skin_analysis.py` does the same for skin tone, but **per subject**:
-faces are grouped by skin color and each subject is compared against its *own*
-median, so two different people are never pulled toward each other.
+faces are grouped by **identity embedding** (SFace, not skin color), assigned
+to human-editable `Subject` rows, and each subject is compared against its own
+reference (hero shot or median) — so two different people are never pulled
+toward each other.
 
 Generative restoration is **not** a `Correction` kind. It is reserved for
 genuinely damaged temporal intervals and is modeled separately — see

@@ -44,7 +44,7 @@ src/colorai/
   analysis.py        shot-to-shot consistency + reference matching
   skin_analysis.py   per-subject skin-tone matching
   correction.py      deterministic correction transforms + preview
-  face.py            YuNet face detection + face-region skin sampling
+  face.py            YuNet detection + SFace identity + skin sampling
   skin.py            color-only skin heuristic (experiment)
   restoration.py     deterministic recovery + generative boundary
   pipeline.py        analyze_master orchestration
