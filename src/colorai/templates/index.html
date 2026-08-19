@@ -20,6 +20,7 @@
     select, input, textarea { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:0.2rem 0.4rem; font-size:0.8rem; }
     .setup-card { display:block; width:100%; text-align:left; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0.55rem 0.65rem; margin-bottom:0.4rem; cursor:pointer; color:var(--text); }
     .setup-card:hover, .setup-card.active { border-color:var(--accent); }
+    .setup-card.drag-over, .variant-card.drag-over { border-color:var(--accent); background:#152033; }
     .variant-card { display:block; width:100%; text-align:left; background:transparent; border:1px solid var(--line); border-radius:6px; padding:0.35rem 0.55rem; margin:0.2rem 0 0.2rem 1rem; cursor:pointer; color:var(--text); }
     .variant-card:hover, .variant-card.active { border-color:var(--accent); }
     .row { display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; }
@@ -84,7 +85,7 @@
       <h2>Interview setups</h2>
       <div id="setup-list">
         {% for setup in ws.setups if setup.parent_id is none %}
-        <button type="button" class="setup-card" data-setup="{{ setup.id }}" onclick="selectSetup({{ setup.id }})">
+        <button type="button" class="setup-card drop-target" data-setup="{{ setup.id }}" onclick="selectSetup({{ setup.id }})" ondragover="allowShotDrop(event)" ondragleave="leaveShotDrop(event)" ondrop="dropShotInGroup(event, {{ setup.id }})">
           <div class="row">
             <span class="name">{{ setup.name }}</span>
             {% if setup.camera %}<span class="badge">{{ setup.camera }}</span>{% endif %}
@@ -94,7 +95,7 @@
           <div class="muted">{{ setup.shot_ids|length }} shots</div>
         </button>
         {% for v in ws.setups if v.parent_id == setup.id %}
-        <button type="button" class="variant-card" data-setup="{{ v.id }}" onclick="selectSetup({{ v.id }})">
+        <button type="button" class="variant-card drop-target" data-setup="{{ v.id }}" onclick="selectSetup({{ v.id }})" ondragover="allowShotDrop(event)" ondragleave="leaveShotDrop(event)" ondrop="dropShotInGroup(event, {{ v.id }})">
           <span class="name">{{ v.name }}</span>
           {% if v.camera %}<span class="badge">{{ v.camera }}</span>{% endif %}
           <span class="muted">· {{ v.shot_ids|length }} shots</span>

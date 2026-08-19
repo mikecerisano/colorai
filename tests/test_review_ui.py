@@ -260,6 +260,23 @@ def test_setup_filmstrips_support_dragging_shots_between_groups(tmp_path):
     assert "function dropShotInGroup" in body
 
 
+def test_sidebar_setup_cards_are_drop_targets_for_shot_moves(tmp_path):
+    client, asset, shots, alice, bob = _client(tmp_path)
+    setup = client.post(
+        f"/api/assets/{asset.id}/groups", json={"name": "interview", "kind": "setup"}
+    ).json()
+    variant = client.post(
+        f"/api/assets/{asset.id}/groups",
+        json={"name": "night", "kind": "variant", "parent_id": setup["id"]},
+    ).json()
+
+    body = client.get("/").text
+    assert f'class="setup-card drop-target" data-setup="{setup["id"]}"' in body
+    assert f'class="variant-card drop-target" data-setup="{variant["id"]}"' in body
+    assert f'ondrop="dropShotInGroup(event, {setup["id"]})"' in body
+    assert f'ondrop="dropShotInGroup(event, {variant["id"]})"' in body
+
+
 def test_active_proposal_skips_rejected_and_uses_newest_suggested(tmp_path):
     client, asset, shots, alice, bob = _client(tmp_path)
     setup = client.post(
