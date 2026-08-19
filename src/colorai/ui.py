@@ -463,6 +463,17 @@ def _deviation_dict(d) -> dict[str, Any]:
 def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
     """Build the review app backed by ``store``, serving stills from ``stills_dir``."""
     stills = Path(stills_dir).resolve()
+    workspace_root = stills.parent.parent
+
+    def stored_media_path(value: str) -> Path:
+        """Resolve legacy relative media paths without depending on CWD."""
+        path = Path(value)
+        if path.is_absolute():
+            return path
+        for candidate in (workspace_root / path, stills.parent / path, stills / path):
+            if candidate.exists():
+                return candidate
+        return workspace_root / path
     stills.mkdir(parents=True, exist_ok=True)
 
     app = FastAPI(title="ColorAI")
@@ -810,7 +821,7 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             if suggestion is None or not suggestion.crop_path:
                 raise HTTPException(status_code=404, detail="suggestion crop not found")
             crop_path = suggestion.crop_path
-        image = cv2.imread(crop_path, cv2.IMREAD_COLOR)
+        image = cv2.imread(str(stored_media_path(crop_path)), cv2.IMREAD_COLOR)
         if image is None:
             raise HTTPException(status_code=500, detail="cannot read crop")
         ok, encoded = cv2.imencode(".png", image)
@@ -1110,7 +1121,7 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             shot = session.get(Shot, shot_id)
         if shot is None:
             raise HTTPException(status_code=404, detail="shot not found")
-        image = load_corrected_still(store, shot)
+        image = load_corrected_still(store, shot, base_dir=workspace_root)
         ok, encoded = cv2.imencode(".png", image)
         if not ok:
             raise HTTPException(status_code=500, detail="failed to encode preview")
@@ -1124,7 +1135,7 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             if rf is None or not rf.image_path:
                 raise HTTPException(status_code=404, detail="no still for this shot")
             still_path = rf.image_path
-        bgr = cv2.imread(still_path, cv2.IMREAD_COLOR)
+        bgr = cv2.imread(str(stored_media_path(still_path)), cv2.IMREAD_COLOR)
         if bgr is None:
             raise HTTPException(status_code=500, detail="cannot read still")
         ok, encoded = cv2.imencode(".png", bgr)
@@ -1146,7 +1157,7 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             still_path = rf.image_path
             bbox = (m.bbox_x, m.bbox_y, m.bbox_w, m.bbox_h)
 
-        image = cv2.imread(still_path, cv2.IMREAD_COLOR)
+        image = cv2.imread(str(stored_media_path(still_path)), cv2.IMREAD_COLOR)
         if image is None:
             raise HTTPException(status_code=500, detail="cannot read still")
         h, w = image.shape[:2]
@@ -1177,7 +1188,7 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             bbox = (metric.bbox_x, metric.bbox_y, metric.bbox_w, metric.bbox_h)
             label = subject.name if subject is not None else f"Face {metric.face_index}"
 
-        image = cv2.imread(still_path, cv2.IMREAD_COLOR)
+        image = cv2.imread(str(stored_media_path(still_path)), cv2.IMREAD_COLOR)
         if image is None:
             raise HTTPException(status_code=500, detail="cannot read still")
         if all(v is not None for v in bbox):

@@ -339,7 +339,9 @@ def normalize_parameters(kind: str, parameters: dict[str, Any]) -> dict[str, Any
 # Preview
 # ---------------------------------------------------------------------------
 
-def load_corrected_still(store: ProjectStore, shot: Shot) -> np.ndarray:
+def load_corrected_still(
+    store: ProjectStore, shot: Shot, *, base_dir: str | Path | None = None
+) -> np.ndarray:
     """Return the shot's representative still (BGR uint8) with enabled corrections applied."""
     from colorai.project.models import RepresentativeFrame
 
@@ -361,9 +363,12 @@ def load_corrected_still(store: ProjectStore, shot: Shot) -> np.ndarray:
         )
         still_path = rf.image_path
 
-    bgr = cv2.imread(still_path, cv2.IMREAD_COLOR)
+    path = Path(still_path)
+    if not path.is_absolute() and base_dir is not None:
+        path = Path(base_dir) / path
+    bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if bgr is None:
-        raise ValueError(f"cannot read still: {still_path!r}")
+        raise ValueError(f"cannot read still: {str(path)!r}")
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     corrected = apply_corrections(rgb, corrections)  # uint8 RGB out for uint8 in
     return cv2.cvtColor(corrected, cv2.COLOR_RGB2BGR)

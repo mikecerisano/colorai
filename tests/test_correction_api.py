@@ -152,3 +152,34 @@ def test_original_404_for_unknown_shot(tmp_path):
     store, stills, _ = _shot_with_midgray_still(tmp_path)
     client = TestClient(create_app(store, stills))
     assert client.get("/shots/9999/original.png").status_code == 404
+
+
+def test_preview_resolves_relative_still_paths_outside_project_cwd(tmp_path, monkeypatch):
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("relative still")
+    asset = store.add_asset(project.id, source_path="/media/m.mov", frame_rate=25.0)
+    shot = make_shots(asset, [(0, 24)])[0]
+    with store.session() as session:
+        session.add(shot)
+        session.flush()
+        session.refresh(shot)
+
+    root = tmp_path / "workspace"
+    stills = root / "_scratch" / "stills"
+    stills.mkdir(parents=True)
+    still = stills / "still.png"
+    cv2.imwrite(str(still), np.full((8, 8, 3), 128, dtype=np.uint8))
+    with store.session() as session:
+        session.add(
+            make_representative_frame(
+                shot, 0, image_path="_scratch/stills/still.png", frame_rate=25.0
+            )
+        )
+        session.commit()
+
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    client = TestClient(create_app(store, stills))
+    assert client.get(f"/shots/{shot.id}/preview.png").status_code == 200
+    assert client.get(f"/shots/{shot.id}/original.png").status_code == 200
