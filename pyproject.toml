@@ -41,6 +41,9 @@ face = [
 agent = [
     "mcp>=1.2,<2",
 ]
+generative = [
+    "onnxruntime>=1.17,<2",
+]
 
 [project.scripts]
 colorai = "colorai.cli:main"

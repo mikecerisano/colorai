@@ -129,19 +129,33 @@ def propose_restoration(
 
 
 def generative_restore(*args, **kwargs) -> np.ndarray:  # noqa: ANN002, ANN003
-    """Generative reconstruction interface (NOT IMPLEMENTED).
+    """Generative reconstruction interface (approval-gated, model-backed).
 
     Selected local models (see ``docs/research-notes.md``):
 
     * temporal — **RIFE** (frame interpolation) for missing/damaged frames
     * spatial  — **LaMa** (inpainting) for damaged regions within a frame
 
-    Both run locally via ONNX Runtime on Apple Silicon. The loader will read
-    model files from ``COLORAI_GENERATIVE_MODEL_DIR``; until a model is
-    present this raises rather than falling back silently.
+    Both run locally via ONNX Runtime on Apple Silicon. The loader reads model
+    files from ``COLORAI_GENERATIVE_MODEL_DIR`` (see :mod:`colorai.generative`);
+    until the models are installed this raises rather than falling back
+    silently. Deterministic recovery (blend/nearest/median) is available now.
     """
+    from colorai.generative import generative_models_status
+
+    status = generative_models_status()
+    missing = [
+        name
+        for name, present in (
+            ("onnxruntime", status["onnxruntime"]),
+            ("rife.onnx", status["rife"]),
+            ("lama.onnx", status["lama"]),
+        )
+        if not present
+    ]
     raise NotImplementedError(
-        "generative restoration models not installed — selected: RIFE (temporal) "
-        "and LaMa (spatial), both ONNX; deterministic recovery "
-        "(blend/nearest/median) is available now"
+        "generative restoration models not installed — missing: "
+        + ", ".join(missing)
+        + f" (model dir: {status['model_dir']}). Deterministic recovery "
+        "(blend/nearest/median) is available now."
     )

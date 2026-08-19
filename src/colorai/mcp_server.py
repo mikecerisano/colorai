@@ -323,6 +323,14 @@ def detect_blank_frames(project: str, shot_id: int, samples: int = 24) -> list[d
 
 
 @mcp.tool()
+def generative_status() -> dict:
+    """Report whether the generative restoration tier (RIFE + LaMa) is ready."""
+    from colorai.generative import generative_models_status
+
+    return generative_models_status()
+
+
+@mcp.tool()
 def get_shot_still(project: str, shot_id: int) -> Image:
     """Return a shot's representative frame as an image (for vision agents)."""
     from colorai.project.models import RepresentativeFrame, Shot
