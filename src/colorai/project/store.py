@@ -171,12 +171,21 @@ def make_shots(asset: MediaAsset, boundaries: Iterable[tuple[int, int]]) -> list
 
 
 def make_representative_frame(
-    shot: Shot, frame_index: int, image_path: str | None = None
+    shot: Shot,
+    frame_index: int,
+    image_path: str | None = None,
+    *,
+    frame_rate: float | None = None,
 ) -> RepresentativeFrame:
-    """Build the representative still for a shot."""
+    """Build the representative still for a shot.
+
+    ``frame_rate`` defaults to the shot's asset rate; pass it explicitly when
+    the shot is detached from its session (avoids a lazy relationship load).
+    """
+    fps = frame_rate if frame_rate is not None else shot.asset.frame_rate
     return RepresentativeFrame(
         shot_id=shot.id,
         frame_index=frame_index,
-        timecode=frames_to_timecode(frame_index, shot.asset.frame_rate),
+        timecode=frames_to_timecode(frame_index, fps),
         image_path=image_path,
     )

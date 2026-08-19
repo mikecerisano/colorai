@@ -1,6 +1,9 @@
-"""Tests for the CLI scaffold."""
+"""Tests for the CLI."""
 
 from __future__ import annotations
+
+import shutil
+import subprocess
 
 import pytest
 
@@ -24,7 +27,7 @@ def test_version():
 
 
 def test_unimplemented_command_exits_nonzero(capsys):
-    assert main(["analyze", "/tmp/master.mov"]) == 1
+    assert main(["ui", "--project", "/tmp/x.sqlite3"]) == 1
     err = capsys.readouterr().out
     assert "not implemented" in err
 
@@ -33,3 +36,38 @@ def test_version_matches_package():
     from importlib.metadata import version
 
     assert version("colorai") == __version__
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not available")
+def test_analyze_end_to_end(tmp_path, capsys):
+    # Two shots: 25 frames black, 25 frames white at 25 fps.
+    clip = tmp_path / "master.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-v", "error",
+            "-f", "lavfi", "-t", "1", "-i", "color=c=black:size=32x32:rate=25",
+            "-f", "lavfi", "-t", "1", "-i", "color=c=white:size=32x32:rate=25",
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0,format=yuv420p",
+            "-c:v", "mpeg4", "-y", str(clip),
+        ],
+        check=True,
+    )
+
+    db = tmp_path / "project.sqlite3"
+    assert main(["analyze", str(clip), "--project", str(db)]) == 0
+
+    out = capsys.readouterr().out
+    assert "shots : 2" in out
+    assert "stills: 2" in out
+    assert "metrics: 2" in out
+
+    # Results must be persisted and stills written to disk.
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(f"sqlite+pysqlite:///{db}")
+    with engine.connect() as conn:
+        shots = conn.execute(text("SELECT COUNT(*) FROM shots")).scalar()
+        frames = conn.execute(text("SELECT COUNT(*) FROM representative_frames")).scalar()
+        metrics = conn.execute(text("SELECT COUNT(*) FROM frame_metrics")).scalar()
+        assert (shots, frames, metrics) == (2, 2, 2)
+    assert len(list((tmp_path / "stills").rglob("*.png"))) == 2
