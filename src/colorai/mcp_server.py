@@ -234,6 +234,38 @@ def track_shot_face(project: str, shot_id: int, face_index: int = 0, samples: in
 
 
 @mcp.tool()
+def detect_blur_pulses(project: str, shot_id: int, samples: int = 16) -> list[dict]:
+    """Detect blur pulses (short low-sharpness intervals) in a shot.
+
+    The signature of Gyroflow-style stabilization: a few motion-blurred frames
+    between sharp frames. Returns inclusive frame intervals.
+    """
+    from colorai.anomaly import detect_blur_pulses as _detect
+    from colorai.project.models import MediaAsset, Shot
+
+    store = _open(project)
+    with store.session() as session:
+        shot = session.get(Shot, shot_id)
+        if shot is None:
+            raise ValueError("shot not found")
+        asset = session.get(MediaAsset, shot.asset_id)
+
+    pulses = _detect(
+        asset.source_path, shot.start_frame, shot.end_frame, asset.frame_rate,
+        samples=samples,
+    )
+    return [
+        {
+            "start_frame": p.start_frame,
+            "end_frame": p.end_frame,
+            "num_frames": p.num_frames,
+            "min_ratio": round(p.min_ratio, 3),
+        }
+        for p in pulses
+    ]
+
+
+@mcp.tool()
 def get_shot_still(project: str, shot_id: int) -> Image:
     """Return a shot's representative frame as an image (for vision agents)."""
     from colorai.project.models import RepresentativeFrame, Shot

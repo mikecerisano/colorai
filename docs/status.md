@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 222 tests passing.
+Current progress. 229 tests passing.
 
 ## Done
 
@@ -51,6 +51,9 @@ Current progress. 222 tests passing.
   re-detection + IoU matching (`tracking.py`), producing a temporally-robust
   skin signature (median + stability) and a temporal-majority skin mask; also
   exposed as the MCP `track_shot_face` tool.
+- **Blur-pulse detection** — `anomaly.py` samples per-frame sharpness and flags
+  short low-sharpness intervals (the Gyroflow post-stabilization signature),
+  exposed as the MCP `detect_blur_pulses` tool.
 - **Agent integration (MCP)** — `colorai mcp` exposes read/refine tools so an
   LLM/agent (Claude Code, Codex, ChatGPT) can review the deterministic
   first-pass and adjust grouping + corrections; its reasoning is persisted as
@@ -72,9 +75,9 @@ Current progress. 222 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 222 tests across timecode, project model, migrations, ingest, shot
+- 229 tests across timecode, project model, migrations, ingest, shot
   detection, frames, metrics, pipeline, correction, analysis, face, skin,
-  skin analysis, tracking, restoration, MCP, UI, and CLI.
+  skin analysis, tracking, anomaly, restoration, MCP, UI, and CLI.
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45
   shots, three skin subjects separated, and per-subject skin drift flagged
   with proposed corrections.

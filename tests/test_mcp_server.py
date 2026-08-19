@@ -166,6 +166,12 @@ def test_get_shot_frame_unknown_shot_raises(tmp_path):
         mcp_server.get_shot_frame(db, 9999, 0)
 
 
+def test_detect_blur_pulses_unknown_shot(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+    with pytest.raises(ValueError):
+        mcp_server.detect_blur_pulses(db, 9999)
+
+
 def test_mcp_server_lists_tools():
     import asyncio
 

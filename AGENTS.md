@@ -44,6 +44,7 @@ src/colorai/
   analysis.py        shot-to-shot consistency + reference matching
   skin_analysis.py   per-subject skin-tone matching
   tracking.py        temporal face tracking + mask propagation
+  anomaly.py         deterministic blur-pulse / anomaly detection
   correction.py      deterministic correction transforms + preview
   face.py            YuNet detection + SFace identity + skin sampling
   skin.py            color-only skin heuristic (experiment)
