@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 390 tests passing.
+Current progress. 392 tests passing.
 
 ## Done
 
@@ -182,6 +182,11 @@ Current progress. 390 tests passing.
   setup/camera labels are human/agent-assigned (by design).
 - OCIO integration for non-Rec.709 masters (LUT display/linear spaces and
   curves are done; OCIO managed color is the remaining piece).
+- **Future, separate workflow: log-master finishing** — an editorially locked
+  ProRes master in a *declared* log gamut/transfer could be input-transformed
+  into a managed working space, organized/matched by setup here, then rendered
+  through an explicit display/output transform. This is not a camera-original
+  or dailies workflow, and source color space must never be guessed.
 - Bundle the generative model files themselves (RIFE + LaMa ONNX) — the loader
   and status surface are wired; the models are large and gitignored.
 - Per-model RIFE/LaMa inference I/O (pre/post-processing), which depends on the
@@ -195,7 +200,7 @@ Current progress. 390 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 390 tests across timecode, project model, migrations (incl. legacy
+- 392 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
   auto-assignment), correction, LUT/curve, render, resumability, editorial,
   references, matching (incl. variants), analysis, face (incl. bbox), skin,

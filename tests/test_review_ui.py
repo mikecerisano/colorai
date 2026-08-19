@@ -108,6 +108,36 @@ def test_face_crop_endpoint_serves_image(tmp_path):
     assert r.content[:4] == b"\x89PNG"
 
 
+def test_face_context_endpoint_marks_only_the_requested_face(tmp_path):
+    client, asset, shots, alice, bob = _client(tmp_path)
+    ws = client.get(f"/api/assets/{asset.id}/workspace").json()
+    alice_face = next(s for s in ws["subjects"] if s["id"] == alice.id)["faces"][0]
+
+    r = client.get(f"/api/skin_metrics/{alice_face['skin_metric_id']}/context.png")
+    assert r.status_code == 200
+    image = cv2.imdecode(np.frombuffer(r.content, dtype=np.uint8), cv2.IMREAD_COLOR)
+    assert image.shape[:2] == (64, 64)
+    # Alice's stored box begins at (10, 12), so it is visibly marked.
+    assert image[12, 10].tolist() != [128, 128, 128]
+    # Bob's separate box is not painted in Alice's context image.
+    assert image[14, 32].tolist() == [128, 128, 128]
+
+
+def test_face_review_links_each_card_to_its_marked_context(tmp_path):
+    client, asset, shots, alice, bob = _client(tmp_path)
+    body = client.get("/").text
+    ws = client.get(f"/api/assets/{asset.id}/workspace").json()
+    face_ids = [
+        f["skin_metric_id"]
+        for subject in ws["subjects"]
+        for f in subject["faces"]
+    ]
+
+    for face_id in face_ids:
+        assert f"/api/skin_metrics/{face_id}/context.png" in body
+    assert "openFaceContext" in body
+
+
 def test_multi_face_bbox_data_present(tmp_path):
     client, asset, shots, alice, bob = _client(tmp_path)
     ws = client.get(f"/api/assets/{asset.id}/workspace").json()

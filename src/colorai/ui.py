@@ -1085,6 +1085,47 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             raise HTTPException(status_code=500, detail="failed to encode crop")
         return Response(content=encoded.tobytes(), media_type="image/png")
 
+    @app.get("/api/skin_metrics/{skin_metric_id}/context.png")
+    def face_context(skin_metric_id: int):
+        """Representative frame marked with this metric's exact face box."""
+        with store.session() as session:
+            metric = session.get(SkinMetric, skin_metric_id)
+            if metric is None:
+                raise HTTPException(status_code=404, detail="face not found")
+            frame = session.query(RepresentativeFrame).filter_by(shot_id=metric.shot_id).first()
+            if frame is None or not frame.image_path:
+                raise HTTPException(status_code=404, detail="no still for this face")
+            subject = session.get(Subject, metric.subject_id) if metric.subject_id else None
+            still_path = frame.image_path
+            bbox = (metric.bbox_x, metric.bbox_y, metric.bbox_w, metric.bbox_h)
+            label = subject.name if subject is not None else f"Face {metric.face_index}"
+
+        image = cv2.imread(still_path, cv2.IMREAD_COLOR)
+        if image is None:
+            raise HTTPException(status_code=500, detail="cannot read still")
+        if all(v is not None for v in bbox):
+            x, y, width, height = (int(v) for v in bbox)
+            # Stable subject colors make the same person recognizable across cards.
+            colors = ((122, 208, 79), (255, 158, 74), (219, 108, 240), (88, 204, 229))
+            color = colors[(metric.subject_id or metric.face_index) % len(colors)]
+            cv2.rectangle(image, (x, y), (x + width, y + height), color, 2)
+            (label_width, label_height), baseline = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1
+            )
+            label_y = y - 5 if y >= label_height + baseline + 8 else y + height + label_height + 5
+            x2 = min(image.shape[1], x + label_width + 8)
+            y0 = max(0, label_y - label_height - baseline - 4)
+            y1 = min(image.shape[0], label_y + baseline + 4)
+            cv2.rectangle(image, (x, y0), (x2, y1), color, thickness=-1)
+            cv2.putText(
+                image, label, (x + 4, label_y), cv2.FONT_HERSHEY_SIMPLEX,
+                0.45, (14, 14, 16), 1, cv2.LINE_AA,
+            )
+        ok, encoded = cv2.imencode(".png", image)
+        if not ok:
+            raise HTTPException(status_code=500, detail="failed to encode face context")
+        return Response(content=encoded.tobytes(), media_type="image/png")
+
     @app.get("/api/assets/{asset_id}/workspace")
     def asset_workspace(asset_id: int):
         with store.session() as session:

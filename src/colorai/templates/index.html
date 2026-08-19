@@ -42,7 +42,9 @@
     .corr-row.off { opacity:0.6; }
     .faces { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px,1fr)); gap:0.85rem; }
     .face { background:var(--panel2); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
-    .face img { width:100%; display:block; background:#000; aspect-ratio:1; object-fit:cover; }
+    .face-context { display:block; width:100%; padding:0; border:0; border-radius:0; background:#000; }
+    .face-context img { width:100%; display:block; aspect-ratio:16/9; object-fit:cover; }
+    .face-context:hover { border-color:transparent; filter:brightness(1.08); }
     .face .fbody { padding:0.45rem 0.6rem; font-size:0.72rem; }
     .face .fbody select { width:100%; margin-top:0.3rem; }
     .face.ref { border-color:var(--green); }
@@ -61,6 +63,10 @@
     .tab { padding:0.3rem 0.8rem; }
     .tab.active { border-color:var(--accent); color:var(--accent); }
     .variant-head { margin:0.8rem 0 0.4rem; font-size:0.85rem; color:var(--accent); }
+    .modal { position:fixed; inset:0; z-index:10; display:flex; align-items:center; justify-content:center; padding:2rem; background:rgba(0,0,0,.78); }
+    .modal-card { max-width:min(1100px, 96vw); max-height:94vh; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:auto; padding:0.75rem; }
+    .modal-card img { display:block; max-width:100%; max-height:78vh; margin-top:0.6rem; }
+    .modal-head { display:flex; justify-content:space-between; align-items:center; gap:1rem; }
   </style>
 </head>
 <body>
@@ -262,7 +268,9 @@
           <div class="faces">
             {% for f in s.faces %}
             <div class="face {% if f.shot_id == s.reference_shot_id %}ref{% endif %}">
-              <img src="/api/skin_metrics/{{ f.skin_metric_id }}/crop.png" alt="face {{ f.face_index }}">
+              <button type="button" class="face-context" onclick="openFaceContext('/api/skin_metrics/{{ f.skin_metric_id }}/context.png', {{ (s.name ~ ' · face ' ~ f.face_index)|tojson }})">
+                <img src="/api/skin_metrics/{{ f.skin_metric_id }}/context.png" alt="{{ s.name }} face {{ f.face_index }} in source frame">
+              </button>
               <div class="fbody">
                 <div>shot {{ f.shot_id }} · face {{ f.face_index }} · {{ f.timecode }}</div>
                 <div class="muted">skin {{ f.mean_bgr | join(', ') }}</div>
@@ -426,6 +434,13 @@
     </main>
   </div>
 
+  <div id="face-context-modal" class="modal hidden" onclick="closeFaceContext()">
+    <div class="modal-card" onclick="event.stopPropagation()">
+      <div class="modal-head"><strong id="face-context-title"></strong><button type="button" onclick="closeFaceContext()">Close</button></div>
+      <img id="face-context-image" alt="marked source frame">
+    </div>
+  </div>
+
   <script>
     const ASSET_ID = {{ asset_id if asset_id is not none else "null" }};
     const HDRS = {'Content-Type':'application/json'};
@@ -445,6 +460,15 @@
       document.querySelectorAll('.setup-card,.variant-card').forEach(c => c.classList.toggle('active', Number(c.dataset.setup) === id));
       document.querySelectorAll('.setup-workspace').forEach(w => w.classList.toggle('hidden', Number(w.dataset.workspace) !== id));
       showTab('setups');
+    }
+
+    function openFaceContext(src, title) {
+      document.getElementById('face-context-image').src = src;
+      document.getElementById('face-context-title').textContent = title;
+      document.getElementById('face-context-modal').classList.remove('hidden');
+    }
+    function closeFaceContext() {
+      document.getElementById('face-context-modal').classList.add('hidden');
     }
 
     // -- actions ------------------------------------------------------------
