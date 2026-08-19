@@ -135,6 +135,37 @@ def test_skin_metric_tools(tmp_path):
     assert detail["skin_faces"] == []
 
 
+def test_get_shot_still_returns_image(tmp_path):
+    import cv2
+    import numpy as np
+
+    from colorai.project import make_representative_frame
+
+    db, asset, shots, subject = _make_store(tmp_path)
+    still = tmp_path / "still.png"
+    cv2.imwrite(str(still), np.zeros((8, 8, 3), dtype=np.uint8))
+    with ProjectStore.open(db).session() as session:
+        session.add(
+            make_representative_frame(shots[0], 0, image_path=str(still), frame_rate=25.0)
+        )
+        session.commit()
+
+    image = mcp_server.get_shot_still(db, shots[0].id)
+    assert str(image.path) == str(still)
+
+
+def test_get_shot_still_unknown_shot_raises(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+    with pytest.raises(ValueError):
+        mcp_server.get_shot_still(db, 9999)
+
+
+def test_get_shot_frame_unknown_shot_raises(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+    with pytest.raises(ValueError):
+        mcp_server.get_shot_frame(db, 9999, 0)
+
+
 def test_mcp_server_lists_tools():
     import asyncio
 

@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 219 tests passing.
+Current progress. 222 tests passing.
 
 ## Done
 
@@ -54,7 +54,8 @@ Current progress. 219 tests passing.
 - **Agent integration (MCP)** — `colorai mcp` exposes read/refine tools so an
   LLM/agent (Claude Code, Codex, ChatGPT) can review the deterministic
   first-pass and adjust grouping + corrections; its reasoning is persisted as
-  `Note` rows for human review.
+  `Note` rows for human review. `get_shot_still`/`get_shot_frame` return real
+  images over MCP, so a vision-capable agent can see the frames it's judging.
 - **Restoration** — deterministic primitives (cross-dissolve, temporal median,
   nearest-good-frame) and a proposal boundary; generative tier is an explicit,
   approval-gated interface awaiting a local model.
@@ -71,7 +72,7 @@ Current progress. 219 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 219 tests across timecode, project model, migrations, ingest, shot
+- 222 tests across timecode, project model, migrations, ingest, shot
   detection, frames, metrics, pipeline, correction, analysis, face, skin,
   skin analysis, tracking, restoration, MCP, UI, and CLI.
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45

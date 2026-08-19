@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 
 from colorai.project.store import ProjectStore
 
@@ -231,6 +231,49 @@ def track_shot_face(project: str, shot_id: int, face_index: int = 0, samples: in
         "mask_coverage": float(result["mask"].mean()) if "mask" in result else None,
         "error": result.get("error"),
     }
+
+
+@mcp.tool()
+def get_shot_still(project: str, shot_id: int) -> Image:
+    """Return a shot's representative frame as an image (for vision agents)."""
+    from colorai.project.models import RepresentativeFrame, Shot
+
+    store = _open(project)
+    with store.session() as session:
+        shot = session.get(Shot, shot_id)
+        if shot is None:
+            raise ValueError("shot not found")
+        rf = session.query(RepresentativeFrame).filter_by(shot_id=shot_id).first()
+        if rf is None or not rf.image_path:
+            raise ValueError("shot has no representative frame")
+        return Image(path=rf.image_path)
+
+
+@mcp.tool()
+def get_shot_frame(project: str, shot_id: int, frame_index: int, scale: int | None = None) -> Image:
+    """Extract an arbitrary frame from a shot and return it as an image."""
+    import shutil
+    import tempfile
+
+    from colorai.frames import extract_frame
+    from colorai.project.models import MediaAsset, Shot
+
+    store = _open(project)
+    with store.session() as session:
+        shot = session.get(Shot, shot_id)
+        if shot is None:
+            raise ValueError("shot not found")
+        asset = session.get(MediaAsset, shot.asset_id)
+
+    probe_dir = Path(tempfile.mkdtemp(prefix="colorai_vision_"))
+    try:
+        out = extract_frame(
+            asset.source_path, frame_index, probe_dir / "frame.png",
+            fps=asset.frame_rate, scale=scale,
+        )
+        return Image(data=out.read_bytes(), format="png")
+    finally:
+        shutil.rmtree(probe_dir, ignore_errors=True)
 
 
 @mcp.tool()
