@@ -875,6 +875,22 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             raise HTTPException(status_code=500, detail="failed to encode preview")
         return Response(content=encoded.tobytes(), media_type="image/png")
 
+    @app.get("/shots/{shot_id}/original.png")
+    def original_image(shot_id: int):
+        """The uncorrected representative still (for before/after comparison)."""
+        with store.session() as session:
+            rf = session.query(RepresentativeFrame).filter_by(shot_id=shot_id).first()
+            if rf is None or not rf.image_path:
+                raise HTTPException(status_code=404, detail="no still for this shot")
+            still_path = rf.image_path
+        bgr = cv2.imread(still_path, cv2.IMREAD_COLOR)
+        if bgr is None:
+            raise HTTPException(status_code=500, detail="cannot read still")
+        ok, encoded = cv2.imencode(".png", bgr)
+        if not ok:
+            raise HTTPException(status_code=500, detail="failed to encode still")
+        return Response(content=encoded.tobytes(), media_type="image/png")
+
     # -- face crop + workspace ----------------------------------------------
 
     @app.get("/api/skin_metrics/{skin_metric_id}/crop.png")

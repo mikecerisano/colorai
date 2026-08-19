@@ -131,3 +131,24 @@ def test_preview_404_for_unknown_shot(tmp_path):
     store, stills, _ = _shot_with_midgray_still(tmp_path)
     client = TestClient(create_app(store, stills))
     assert client.get("/shots/9999/preview.png").status_code == 404
+
+
+def test_original_returns_uncorrected_still(tmp_path):
+    client, shot_id = _client(tmp_path)
+    # Apply a strong correction so preview and original would diverge.
+    client.post(
+        f"/api/shots/{shot_id}/corrections",
+        json={"kind": "exposure", "parameters": {"gain": 2.0}},
+    )
+    r = client.get(f"/shots/{shot_id}/original.png")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    img = cv2.imdecode(np.frombuffer(r.content, dtype=np.uint8), cv2.IMREAD_COLOR)
+    # The original still must remain mid-gray regardless of the correction.
+    assert img.mean() == pytest.approx(128.0, abs=3)
+
+
+def test_original_404_for_unknown_shot(tmp_path):
+    store, stills, _ = _shot_with_midgray_still(tmp_path)
+    client = TestClient(create_app(store, stills))
+    assert client.get("/shots/9999/original.png").status_code == 404

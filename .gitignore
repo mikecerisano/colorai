@@ -10,6 +10,7 @@ venv/
 
 # Scratch / ad-hoc checks
 _scratch/
+.codewhale/
 
 # Test / tooling
 .pytest_cache/

@@ -11,51 +11,58 @@
     header { display:flex; align-items:center; gap:1rem; padding:0.6rem 1rem; border-bottom:1px solid var(--line); background:var(--panel); }
     header h1 { font-size:1rem; margin:0; }
     .muted { color:var(--muted); font-size:0.8rem; }
-    .layout { display:grid; grid-template-columns:300px 1fr; height:calc(100vh - 49px); }
+    .layout { display:grid; grid-template-columns:320px 1fr; height:calc(100vh - 49px); }
     .sidebar { border-right:1px solid var(--line); overflow-y:auto; padding:0.75rem; background:var(--panel); }
     .main { overflow-y:auto; padding:1rem; }
-    h2 { font-size:0.85rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); margin:1rem 0 0.5rem; }
-    .setup-card { display:block; width:100%; text-align:left; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0.6rem 0.7rem; margin-bottom:0.5rem; cursor:pointer; color:var(--text); }
-    .setup-card:hover, .setup-card.active { border-color:var(--accent); }
-    .setup-card .row { display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; }
-    .setup-card .name { font-weight:600; }
-    .badge { display:inline-block; font-size:0.68rem; padding:0 0.4rem; border-radius:8px; border:1px solid var(--line); color:var(--muted); }
-    .badge.unassigned { color:var(--amber); border-color:#6b5626; }
-    .badge.suggested { color:var(--amber); border-color:#6b5626; }
-    .badge.approved { color:var(--green); border-color:#2c6b3f; }
-    .badge.needs-review { color:var(--amber); border-color:#6b5626; }
-    .badge.intentional { color:var(--accent); border-color:#2b4c73; }
-    button { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.78rem; }
+    h2 { font-size:0.85rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); margin:1.1rem 0 0.5rem; }
+    button { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:0.22rem 0.55rem; cursor:pointer; font-size:0.78rem; }
     button:hover { border-color:var(--accent); }
     select, input, textarea { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:0.2rem 0.4rem; font-size:0.8rem; }
-    .filmstrip { display:flex; gap:0.6rem; overflow-x:auto; padding-bottom:0.5rem; }
-    .shot-thumb { min-width:180px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
-    .shot-thumb img { width:100%; display:block; background:#000; }
+    .setup-card { display:block; width:100%; text-align:left; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0.55rem 0.65rem; margin-bottom:0.4rem; cursor:pointer; color:var(--text); }
+    .setup-card:hover, .setup-card.active { border-color:var(--accent); }
+    .variant-card { display:block; width:100%; text-align:left; background:transparent; border:1px solid var(--line); border-radius:6px; padding:0.35rem 0.55rem; margin:0.2rem 0 0.2rem 1rem; cursor:pointer; color:var(--text); }
+    .variant-card:hover, .variant-card.active { border-color:var(--accent); }
+    .row { display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; }
+    .name { font-weight:600; }
+    .badge { display:inline-block; font-size:0.68rem; padding:0 0.4rem; border-radius:8px; border:1px solid var(--line); color:var(--muted); }
+    .badge.unassigned, .badge.suggested, .badge.needs-review { color:var(--amber); border-color:#6b5626; }
+    .badge.approved { color:var(--green); border-color:#2c6b3f; }
+    .badge.intentional { color:var(--accent); border-color:#2b4c73; }
+    .badge.proposed { color:var(--amber); border-color:#6b5626; }
+    .badge.enabled { color:var(--green); border-color:#2c6b3f; }
+    .filmstrip { display:flex; gap:0.6rem; overflow-x:auto; padding:0.25rem 0 0.5rem; }
+    .shot-thumb { min-width:200px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; overflow:hidden; cursor:pointer; }
+    .shot-thumb img { width:100%; display:block; background:#000; aspect-ratio:16/9; object-fit:cover; }
+    .shot-thumb.ref-shot { outline:2px solid var(--green); }
     .shot-thumb .meta { padding:0.4rem 0.55rem; font-size:0.72rem; color:var(--muted); }
     .ref-panel { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0.75rem; margin-top:0.75rem; }
+    .ref-large { display:flex; gap:1rem; align-items:flex-start; }
+    .ref-large img { width:320px; max-width:45%; border-radius:8px; border:1px solid var(--line); background:#000; }
     .corr-row { display:flex; align-items:center; gap:0.5rem; padding:0.3rem 0; border-bottom:1px solid var(--line); font-size:0.82rem; }
-    .corr-row.off { opacity:0.55; }
-    .faces { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:0.75rem; }
+    .corr-row.off { opacity:0.6; }
+    .faces { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px,1fr)); gap:0.85rem; }
     .face { background:var(--panel2); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
     .face img { width:100%; display:block; background:#000; aspect-ratio:1; object-fit:cover; }
-    .face .fbody { padding:0.4rem 0.55rem; font-size:0.72rem; }
+    .face .fbody { padding:0.45rem 0.6rem; font-size:0.72rem; }
     .face .fbody select { width:100%; margin-top:0.3rem; }
     .face.ref { border-color:var(--green); }
-    .subject { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0.6rem 0.7rem; margin-bottom:0.75rem; }
+    .subject { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0.65rem 0.75rem; margin-bottom:0.85rem; }
     .subject .head { display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.5rem; }
-    .subject .name { font-weight:600; }
-    .inbox-item { display:flex; align-items:center; gap:0.5rem; padding:0.35rem 0; border-bottom:1px solid var(--line); font-size:0.8rem; }
+    .inbox-item { display:flex; align-items:center; gap:0.5rem; padding:0.4rem 0; border-bottom:1px solid var(--line); font-size:0.8rem; }
+    .sug { display:flex; align-items:flex-start; gap:0.7rem; padding:0.5rem; border:1px solid var(--line); border-radius:8px; margin-bottom:0.5rem; background:var(--panel2); }
+    .sug img { height:96px; border:1px solid var(--line); border-radius:4px; background:#000; }
     .hidden { display:none; }
     .tabs { display:flex; gap:0.5rem; margin-bottom:1rem; }
     .tab { padding:0.3rem 0.8rem; }
     .tab.active { border-color:var(--accent); color:var(--accent); }
+    .variant-head { margin:0.8rem 0 0.4rem; font-size:0.85rem; color:var(--accent); }
   </style>
 </head>
 <body>
   <header>
     <h1>ColorAI Review</h1>
     <span class="muted">{{ projects }}</span>
-    <span class="muted">· {{ ws.setups|length }} setups · {{ ws.subjects|length }} subjects</span>
+    <span class="muted">· {{ ws.setups|length }} groups · {{ ws.subjects|length }} subjects</span>
   </header>
 
   <div class="layout">
@@ -63,33 +70,34 @@
       <h2>Interview setups</h2>
       <div id="setup-list">
         {% for setup in ws.setups if setup.parent_id is none %}
-        <button class="setup-card" data-setup="{{ setup.id }}" onclick="selectSetup({{ setup.id }})">
+        <button type="button" class="setup-card" data-setup="{{ setup.id }}" onclick="selectSetup({{ setup.id }})">
           <div class="row">
             <span class="name">{{ setup.name }}</span>
-            {% if setup.kind == "setup" %}<span class="badge">setup</span>{% endif %}
             {% if setup.camera %}<span class="badge">{{ setup.camera }}</span>{% endif %}
+            {% if setup.reference_state == "approved" %}<span class="badge approved">approved ref</span>
+            {% elif setup.reference_state == "suggested" %}<span class="badge suggested">suggested ref</span>{% endif %}
           </div>
-          <div class="row muted">
-            {{ setup.shot_ids|length }} shots
-            {% if setup.reference_state == "approved" %}<span class="badge approved">approved ref</span>{% elif setup.reference_state == "suggested" %}<span class="badge suggested">suggested ref</span>{% endif %}
-          </div>
-          {% set variants = ws.setups | selectattr('parent_id','equalto',setup.id) | list %}
-          {% if variants %}
-          <div class="row" style="margin-top:0.3rem">
-            {% for v in variants %}<span class="badge">variant: {{ v.name }}</span>{% endfor %}
-          </div>
-          {% endif %}
+          <div class="muted">{{ setup.shot_ids|length }} shots</div>
+        </button>
+        {% for v in ws.setups if v.parent_id == setup.id %}
+        <button type="button" class="variant-card" data-setup="{{ v.id }}" onclick="selectSetup({{ v.id }})">
+          <span class="name">{{ v.name }}</span>
+          {% if v.camera %}<span class="badge">{{ v.camera }}</span>{% endif %}
+          <span class="muted">· {{ v.shot_ids|length }} shots</span>
+          {% if v.reference_state == "approved" %}<span class="badge approved">ref</span>{% endif %}
         </button>
         {% endfor %}
+        <div style="margin:0.2rem 0 0.5rem 1rem"><button type="button" onclick="createVariant({{ setup.id }})">+ variant</button></div>
+        {% endfor %}
         {% if not (ws.setups | selectattr('parent_id','equalto',none) | list) %}
-        <p class="muted">No setups yet. Create one below or from the inbox.</p>
+        <p class="muted">No setups yet. Create one, or make one from the inbox.</p>
         {% endif %}
       </div>
 
       <h2>New setup</h2>
-      <div class="row" style="display:flex;gap:0.4rem">
+      <div class="row">
         <input id="new-setup-name" placeholder="Setup name" style="flex:1">
-        <button onclick="createSetup()">Create</button>
+        <button type="button" onclick="createSetup()">Create</button>
       </div>
 
       <h2>Unassigned</h2>
@@ -101,16 +109,14 @@
 
     <main class="main">
       <div class="tabs">
-        <button class="tab active" id="tab-setups" onclick="showTab('setups')">Setups</button>
-        <button class="tab" id="tab-faces" onclick="showTab('faces')">Face review</button>
-        <button class="tab" id="tab-inbox" onclick="showTab('inbox')">Inbox</button>
+        <button type="button" class="tab active" id="tab-setups" onclick="showTab('setups')">Setups</button>
+        <button type="button" class="tab" id="tab-faces" onclick="showTab('faces')">Face review</button>
+        <button type="button" class="tab" id="tab-inbox" onclick="showTab('inbox')">Inbox</button>
       </div>
 
       <!-- Setups workspace -->
       <section id="tab-setups-pane">
-        {% if not ws.setups %}
-        <p class="muted">No data yet — run <code>colorai analyze &lt;master&gt;</code> first.</p>
-        {% endif %}
+        {% if not ws.setups %}<p class="muted">No data yet — run <code>colorai analyze &lt;master&gt;</code> first.</p>{% endif %}
         {% for setup in ws.setups %}
         <div class="setup-workspace {% if loop.index0 > 0 %}hidden{% endif %}" data-workspace="{{ setup.id }}">
           <h2>{{ setup.name }}
@@ -120,58 +126,79 @@
             {% elif setup.reference_state == "suggested" %}<span class="badge suggested">suggested reference</span>
             {% else %}<span class="badge">no reference</span>{% endif %}
           </h2>
-          <div class="muted" style="margin-bottom:0.5rem">
-            subjects: {% for sid in setup.subject_ids %}{{ subject_names[sid] }}{% if not loop.last %}, {% endif %}{% endfor %}
-          </div>
 
-          {% set members = ws.shots | selectattr('group_id','equalto',setup.id) | list %}
+          {% set refs = ws.reference_proposals | selectattr('group_id','equalto',setup.id) | list %}
+          {% if refs %}
+          <div class="ref-panel">
+            <div class="muted" style="margin-bottom:0.5rem">Reference candidate</div>
+            <div class="ref-large">
+              {% set ref_shot = refs[0].shot_id %}
+              <img src="/shots/{{ ref_shot }}/preview.png" alt="reference shot {{ ref_shot }}">
+              <div style="flex:1">
+                <div class="row">
+                  <span class="badge {{ 'approved' if refs[0].state=='approved' else 'suggested' }}">{{ refs[0].state }}</span>
+                  <span>shot {{ ref_shot }} · conf {{ refs[0].confidence }}</span>
+                </div>
+                <p class="muted">{{ refs[0].reason }}</p>
+                {% if refs[0].state == "suggested" %}
+                <button type="button" onclick="approveRef({{ refs[0].id }})">Approve</button>
+                <button type="button" onclick="rejectRef({{ refs[0].id }})">Reject</button>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <p class="muted">No reference proposed yet — have the agent propose one, or pick a shot.</p>
+          {% endif %}
+
+          {% set direct = ws.shots | selectattr('group_id','equalto',setup.id) | list %}
+          <div class="muted" style="margin-top:0.6rem">{{ direct|length }} shots{% if setup.camera %} · camera {{ setup.camera }}{% endif %}</div>
           <div class="filmstrip">
-            {% for s in members %}
-            <div class="shot-thumb" data-shot="{{ s.id }}">
-              <img src="/shots/{{ s.id }}/preview.png" alt="shot {{ s.index }}">
+            {% for s in direct %}
+            <div class="shot-thumb {% if setup.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}">
+              <img src="/shots/{{ s.id }}/preview.png" data-preview src-orig="/shots/{{ s.id }}/original.png" alt="shot {{ s.index }}">
               <div class="meta">
                 shot {{ s.index }} · {{ s.start_tc }}
                 {% if s.excused %}<span class="badge intentional">intentional</span>{% endif %}
-                {% if s.review_status == "pending" and s.corrections %}<span class="badge needs-review">needs review</span>{% endif %}
+                {% if s.corrections %}<span class="badge needs-review">proposed</span>{% endif %}
               </div>
             </div>
             {% endfor %}
           </div>
 
-          <!-- reference recommendations -->
-          <div class="ref-panel">
-            <div class="muted" style="margin-bottom:0.4rem">Reference recommendation</div>
-            {% set refs = ws.reference_proposals | selectattr('group_id','equalto',setup.id) | list %}
-            {% if not refs %}<p class="muted">No proposal yet — have the agent propose one, or pick a shot.</p>{% endif %}
-            {% for r in refs %}
-            <div class="corr-row">
-              <span class="badge {{ 'approved' if r.state=='approved' else 'suggested' if r.state=='suggested' else '' }}">{{ r.state }}</span>
-              <span>shot {{ r.shot_id }} · conf {{ r.confidence }}</span>
-              <span class="muted">{{ r.reason }}</span>
-              {% if r.state == "suggested" %}
-              <button onclick="approveRef({{ r.id }})">Approve</button>
-              <button onclick="rejectRef({{ r.id }})">Reject</button>
-              {% endif %}
+          {% for v in ws.setups if v.parent_id == setup.id %}
+          <div class="variant-head">variant: {{ v.name }}{% if v.camera %} · camera {{ v.camera }}{% endif %}</div>
+          <div class="filmstrip">
+            {% for s in ws.shots | selectattr('group_id','equalto',v.id) | list %}
+            <div class="shot-thumb {% if v.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}">
+              <img src="/shots/{{ s.id }}/preview.png" data-preview src-orig="/shots/{{ s.id }}/original.png" alt="shot {{ s.index }}">
+              <div class="meta">shot {{ s.index }} · {{ s.start_tc }}{% if s.corrections %} <span class="badge needs-review">proposed</span>{% endif %}</div>
             </div>
             {% endfor %}
           </div>
+          {% endfor %}
 
-          <!-- proposed corrections (always disabled until approved) -->
-          <h2>Proposed corrections</h2>
-          {% set with_corrections = members | selectattr('corrections') | list %}
-          {% for s in members if s.corrections %}
+          <!-- corrections (approve/enable + before/after) -->
+          <h2>Corrections</h2>
+          {% set all_members = ws.shots | selectattr('group_id','equalto',setup.id) | list %}
+          {% for v in ws.setups if v.parent_id == setup.id %}{% set all_members = all_members + (ws.shots | selectattr('group_id','equalto',v.id) | list) %}{% endfor %}
+          {% set any_corr = all_members | selectattr('corrections') | list %}
+          {% if not any_corr %}<p class="muted">No corrections proposed in this setup.</p>{% endif %}
+          {% for s in all_members if s.corrections %}
           <div class="ref-panel" style="margin-top:0.4rem">
-            <div class="muted">shot {{ s.index }} · {{ s.start_tc }}</div>
+            <div class="row">
+              <span class="muted">shot {{ s.index }} · {{ s.start_tc }}</span>
+              <button type="button" onclick="toggleCompare({{ s.id }})">Before / after</button>
+            </div>
             {% for c in s.corrections %}
             <div class="corr-row {{ '' if c.enabled else 'off' }}">
-              <input type="checkbox" {% if c.enabled %}checked{% endif %} disabled>
+              <input type="checkbox" {% if c.enabled %}checked{% endif %} onchange="toggleCorrection({{ c.id }}, this.checked)">
               <span>{{ c.kind }}</span>
               <span class="muted">{{ c.parameters }}</span>
+              <span class="badge {{ 'enabled' if c.enabled else 'proposed' }}">{{ 'enabled' if c.enabled else 'proposed' }}</span>
             </div>
             {% endfor %}
           </div>
-          {% else %}
-          <p class="muted">No corrections proposed in this setup.</p>
           {% endfor %}
         </div>
         {% endfor %}
@@ -187,35 +214,33 @@
             {% if s.name_confirmed %}<span class="badge approved">confirmed</span>{% else %}<span class="badge">auto</span>{% endif %}
             {% if s.reference_shot_id %}<span class="badge approved">ref ★</span>{% endif %}
             <input type="text" id="rename-{{ s.id }}" value="{{ s.name }}" style="width:8rem">
-            <button onclick="renameSubject({{ s.id }})">Rename</button>
+            <button type="button" onclick="renameSubject({{ s.id }})">Rename</button>
             <select id="merge-into-{{ s.id }}">
               {% for other in ws.subjects if other.id != s.id %}<option value="{{ other.id }}">{{ other.name }}</option>{% endfor %}
             </select>
-            <button onclick="mergeSubject({{ s.id }})">Merge into</button>
-            <button onclick="deleteSubject({{ s.id }})">Delete</button>
+            <button type="button" onclick="mergeSubject({{ s.id }})">Merge into</button>
+            <button type="button" onclick="deleteSubject({{ s.id }})">Delete</button>
           </div>
 
-          {% set name_sugs = ws.name_suggestions | selectattr('subject_id','equalto',s.id) | list %}
-          {% for n in name_sugs %}
-          <div class="ref-panel" style="margin:0.4rem 0">
-            <div class="row" style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
-              <span class="badge suggested">suggested name</span>
-              <b>{{ n.candidate_name }}</b>
-              {% if n.role_text %}<span class="muted">{{ n.role_text }}</span>{% endif %}
-              <span class="muted">conf {{ n.confidence }}</span>
-              <span class="muted">{{ n.timecode }}</span>
+          {% for n in ws.name_suggestions | selectattr('subject_id','equalto',s.id) | list %}
+          <div class="sug">
+            <img src="/api/name-suggestions/{{ n.id }}/crop.png" alt="lower-third">
+            <div style="flex:1">
+              <div class="row">
+                <span class="badge suggested">suggested name</span>
+                <b>{{ n.candidate_name }}</b>
+                {% if n.role_text %}<span class="muted">{{ n.role_text }}</span>{% endif %}
+                <span class="muted">conf {{ n.confidence }} · {{ n.timecode }}</span>
+              </div>
+              <div class="muted">{{ n.raw_text }}</div>
+              {% if n.state == "suggested" %}
+              <div style="margin-top:0.4rem">
+                <button type="button" onclick="acceptName({{ n.id }})">Accept</button>
+                <button type="button" onclick="editName({{ n.id }})">Edit</button>
+                <button type="button" onclick="ignoreName({{ n.id }})">Ignore</button>
+              </div>
+              {% else %}<span class="badge">{{ n.state }}</span>{% endif %}
             </div>
-            <div style="display:flex;align-items:flex-start;gap:0.6rem;margin-top:0.4rem">
-              <img src="/api/name-suggestions/{{ n.id }}/crop.png" style="height:56px;border:1px solid var(--line);border-radius:4px">
-              <div class="muted" style="flex:1">{{ n.raw_text }}</div>
-            </div>
-            {% if n.state == "suggested" %}
-            <div style="margin-top:0.4rem">
-              <button onclick="acceptName({{ n.id }})">Accept</button>
-              <button onclick="editName({{ n.id }}, {{ s.id }})">Edit</button>
-              <button onclick="ignoreName({{ n.id }})">Ignore</button>
-            </div>
-            {% else %}<span class="badge">{{ n.state }}</span>{% endif %}
           </div>
           {% endfor %}
 
@@ -226,7 +251,7 @@
               <div class="fbody">
                 <div>shot {{ f.shot_id }} · face {{ f.face_index }} · {{ f.timecode }}</div>
                 <div class="muted">skin {{ f.mean_bgr | join(', ') }}</div>
-                <select class="face-assign" data-skin-metric-id="{{ f.skin_metric_id }}" data-subject-id="{{ s.id }}" onchange="assignFace(this)">
+                <select class="face-assign" data-skin-metric-id="{{ f.skin_metric_id }}" onchange="assignFace(this)">
                   <option value="" {% if f.subject_id is none %}selected{% endif %}>Unassigned</option>
                   {% for other in ws.subjects %}
                   <option value="{{ other.id }}" {% if f.subject_id == other.id %}selected{% endif %}>{{ other.name }}</option>
@@ -238,16 +263,34 @@
           </div>
         </div>
         {% endfor %}
-        <button onclick="newSubject()">+ New subject</button>
+        <button type="button" onclick="newSubject()">+ New subject</button>
       </section>
 
       <!-- Inbox -->
       <section id="tab-inbox-pane" class="hidden">
+        <h2>Unassigned shots</h2>
+        {% if not ws.unassigned_shots %}<p class="muted">None.</p>{% endif %}
+        {% for s in ws.unassigned_shots %}
+        <div class="inbox-item">
+          <input type="checkbox" class="shot-select" value="{{ s.id }}">
+          <span>shot {{ s.index }} · {{ s.start_tc }} → {{ s.end_tc }}</span>
+        </div>
+        {% endfor %}
+        {% if ws.unassigned_shots %}
+        <div class="row" style="margin-top:0.5rem">
+          <button type="button" onclick="createSetupFromSelected()">Make setup from selected</button>
+          <select id="batch-setup-target" style="width:10rem">
+            {% for g in ws.setups %}<option value="{{ g.id }}">{{ g.name }}{% if g.camera %} ({{ g.camera }}){% endif %}</option>{% endfor %}
+          </select>
+          <button type="button" onclick="addSelectedToSetup()">Add selected to setup</button>
+        </div>
+        {% endif %}
+
         <h2>Unassigned faces</h2>
         {% if not ws.unassigned_faces %}<p class="muted">None.</p>{% endif %}
         {% for f in ws.unassigned_faces %}
         <div class="inbox-item">
-          <img src="/api/skin_metrics/{{ f.skin_metric_id }}/crop.png" style="width:48px;height:48px;object-fit:cover;border-radius:6px">
+          <img src="/api/skin_metrics/{{ f.skin_metric_id }}/crop.png" style="width:56px;height:56px;object-fit:cover;border-radius:6px">
           <span>shot {{ f.shot_id }} · face {{ f.face_index }} · {{ f.timecode }}</span>
           <select class="face-assign" data-skin-metric-id="{{ f.skin_metric_id }}" onchange="assignFace(this)">
             <option value="" selected>Unassigned</option>
@@ -256,35 +299,25 @@
         </div>
         {% endfor %}
 
-        <h2>Unassigned shots</h2>
-        {% if not ws.unassigned_shots %}<p class="muted">None.</p>{% endif %}
-        {% for s in ws.unassigned_shots %}
-        <div class="inbox-item">
-          <span>shot {{ s.index }} · {{ s.start_tc }} → {{ s.end_tc }}</span>
-          <select id="add-shot-{{ s.id }}">
-            <option value="">Add to setup…</option>
-            {% for g in ws.setups %}<option value="{{ g.id }}">{{ g.name }}{% if g.camera %} ({{ g.camera }}){% endif %}</option>{% endfor %}
-          </select>
-          <button onclick="addShotToSetup({{ s.id }})">Assign</button>
-        </div>
-        {% endfor %}
-
         <h2>Name suggestions (unassigned)</h2>
         {% set unassigned_sugs = ws.name_suggestions | selectattr('subject_id','none') | list %}
         {% if not unassigned_sugs %}<p class="muted">None.</p>{% endif %}
         {% for n in unassigned_sugs %}
-        <div class="inbox-item" style="align-items:flex-start">
-          <img src="/api/name-suggestions/{{ n.id }}/crop.png" style="width:56px;border:1px solid var(--line);border-radius:4px">
+        <div class="sug">
+          <img src="/api/name-suggestions/{{ n.id }}/crop.png" alt="lower-third">
           <div style="flex:1">
-            <div><b>{{ n.candidate_name }}</b> <span class="muted">{{ n.role_text or '' }} · shot {{ n.shot_id }} · {{ n.timecode }} · conf {{ n.confidence }}</span></div>
+            <div class="row">
+              <b>{{ n.candidate_name }}</b>
+              <span class="muted">{{ n.role_text or '' }} · shot {{ n.shot_id }} · {{ n.timecode }} · conf {{ n.confidence }}</span>
+            </div>
             <div class="muted">{{ n.raw_text }}</div>
-            <div style="display:flex;gap:0.4rem;margin-top:0.3rem">
+            <div class="row" style="margin-top:0.3rem">
               <select id="assign-name-{{ n.id }}">
                 <option value="">Assign to…</option>
                 {% for s in ws.subjects %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
               </select>
-              <button onclick="assignName({{ n.id }})">Assign</button>
-              {% if n.state == "suggested" %}<button onclick="ignoreName({{ n.id }})">Ignore</button>{% endif %}
+              <button type="button" onclick="assignName({{ n.id }})">Assign</button>
+              {% if n.state == "suggested" %}<button type="button" onclick="ignoreName({{ n.id }})">Ignore</button>{% endif %}
             </div>
           </div>
         </div>
@@ -295,10 +328,10 @@
 
   <script>
     const ASSET_ID = {{ asset_id if asset_id is not none else "null" }};
+    const HDRS = {'Content-Type':'application/json'};
 
-    async function post(url, body) {
-      await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{}) });
-      location.reload();
+    async function request(url, method, body) {
+      return fetch(url, {method, headers:HDRS, body: body !== undefined ? JSON.stringify(body) : undefined});
     }
 
     function showTab(name) {
@@ -309,63 +342,102 @@
     }
 
     function selectSetup(id) {
-      document.querySelectorAll('.setup-card').forEach(c => c.classList.toggle('active', Number(c.dataset.setup) === id));
+      document.querySelectorAll('.setup-card,.variant-card').forEach(c => c.classList.toggle('active', Number(c.dataset.setup) === id));
       document.querySelectorAll('.setup-workspace').forEach(w => w.classList.toggle('hidden', Number(w.dataset.workspace) !== id));
       showTab('setups');
     }
 
+    // -- actions ------------------------------------------------------------
     async function assignFace(sel) {
       const subjectId = sel.value ? Number(sel.value) : null;
-      await fetch(`/api/skin_metrics/${sel.dataset.skinMetricId}`, {
-        method:'PATCH', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({subject_id: subjectId})
-      });
+      await request(`/api/skin_metrics/${sel.dataset.skinMetricId}`, 'PATCH', {subject_id: subjectId});
       location.reload();
     }
-
     async function renameSubject(id) {
       const name = document.getElementById('rename-'+id).value;
-      await fetch(`/api/subjects/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name}) });
+      await request(`/api/subjects/${id}`, 'PATCH', {name});
       location.reload();
     }
     async function mergeSubject(dropId) {
       const keepId = Number(document.getElementById('merge-into-'+dropId).value);
-      await post('/api/subjects/merge', {keep_id: keepId, drop_id: dropId});
-    }
-    async function deleteSubject(id) {
-      await fetch(`/api/subjects/${id}`, { method:'DELETE' });
+      await request('/api/subjects/merge', 'POST', {keep_id: keepId, drop_id: dropId});
       location.reload();
     }
+    async function deleteSubject(id) { await request(`/api/subjects/${id}`, 'DELETE'); location.reload(); }
     async function newSubject() {
       const n = prompt('New subject name');
-      if (n && ASSET_ID !== null) await post(`/api/assets/${ASSET_ID}/subjects`, {name:n});
+      if (n && ASSET_ID !== null) { await request(`/api/assets/${ASSET_ID}/subjects`, 'POST', {name:n}); location.reload(); }
     }
-
     async function createSetup() {
       const name = document.getElementById('new-setup-name').value;
-      if (name && ASSET_ID !== null) await post(`/api/assets/${ASSET_ID}/groups`, {name, kind:'setup'});
+      if (name && ASSET_ID !== null) { await request(`/api/assets/${ASSET_ID}/groups`, 'POST', {name, kind:'setup'}); location.reload(); }
     }
-    async function addShotToSetup(shotId) {
-      const gid = document.getElementById('add-shot-'+shotId).value;
-      if (gid) await fetch(`/api/shots/${shotId}/group`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({group_id: Number(gid)}) }).then(()=>location.reload());
+    async function createVariant(parentId) {
+      const name = prompt('Lighting variant name');
+      if (name && ASSET_ID !== null) { await request(`/api/assets/${ASSET_ID}/groups`, 'POST', {name, kind:'variant', parent_id: parentId}); location.reload(); }
     }
+    async function approveRef(id) { await request(`/api/reference-proposals/${id}/approve`, 'POST'); location.reload(); }
+    async function rejectRef(id) { await request(`/api/reference-proposals/${id}/reject`, 'POST'); location.reload(); }
 
-    async function approveRef(id) { await post(`/api/reference-proposals/${id}/approve`); }
-    async function rejectRef(id) { await post(`/api/reference-proposals/${id}/reject`); }
-
-    async function acceptName(id) { await post(`/api/name-suggestions/${id}/accept`); }
-    async function ignoreName(id) { await post(`/api/name-suggestions/${id}/ignore`); }
+    async function acceptName(id) {
+      await request(`/api/name-suggestions/${id}/accept`, 'POST', {});
+      location.reload();
+    }
     async function editName(id) {
       const n = prompt('Edit name');
-      if (n) await post(`/api/name-suggestions/${id}/accept`, {name:n});
+      if (n !== null) {
+        await request(`/api/name-suggestions/${id}/accept`, 'POST', {name: n});
+        location.reload();
+      }
     }
+    async function ignoreName(id) { await request(`/api/name-suggestions/${id}/ignore`, 'POST'); location.reload(); }
     async function assignName(id) {
       const sid = document.getElementById('assign-name-'+id).value;
-      if (sid) await post(`/api/name-suggestions/${id}/assign`, {subject_id: Number(sid)});
+      if (sid) { await request(`/api/name-suggestions/${id}/assign`, 'POST', {subject_id: Number(sid)}); location.reload(); }
     }
 
-    // Open the first setup by default.
-    document.querySelectorAll('.setup-card').forEach((c,i) => { if (i===0) selectSetup(Number(c.dataset.setup)); });
+    // -- batch setup --------------------------------------------------------
+    async function assignShotToGroup(shotId, groupId) {
+      await request(`/api/shots/${shotId}/group`, 'PUT', {group_id: groupId});
+    }
+    function selectedShotIds() {
+      return [...document.querySelectorAll('.shot-select:checked')].map(c => Number(c.value));
+    }
+    async function createSetupFromSelected() {
+      const ids = selectedShotIds();
+      if (!ids.length) { alert('Select shots first'); return; }
+      const name = prompt('Setup name');
+      if (!name || ASSET_ID === null) return;
+      const res = await request(`/api/assets/${ASSET_ID}/groups`, 'POST', {name, kind:'setup'});
+      const g = await res.json();
+      for (const id of ids) await assignShotToGroup(id, g.id);
+      location.reload();
+    }
+    async function addSelectedToSetup() {
+      const ids = selectedShotIds();
+      const gid = Number(document.getElementById('batch-setup-target').value);
+      if (!ids.length || !gid) { alert('Select shots and a target setup'); return; }
+      for (const id of ids) await assignShotToGroup(id, gid);
+      location.reload();
+    }
+
+    // -- corrections / before-after ----------------------------------------
+    async function toggleCorrection(id, enabled) {
+      await request(`/api/corrections/${id}`, 'PATCH', {enabled});
+      location.reload();
+    }
+    function toggleCompare(shotId) {
+      document.querySelectorAll(`.shot-thumb[data-shot="${shotId}"] img[data-preview]`).forEach(img => {
+        const orig = img.getAttribute('src-orig');
+        const prev = img.getAttribute('src');
+        img.setAttribute('src', orig);
+        img.setAttribute('src-orig', prev);
+      });
+    }
+
+    // Open the first group by default.
+    const first = document.querySelector('.setup-card,.variant-card');
+    if (first) selectSetup(Number(first.dataset.setup));
   </script>
 </body>
 </html>
