@@ -430,6 +430,11 @@
           <div class="row" style="margin-top:0.3rem">
             <span class="badge intentional">intentional</span>
             <span class="muted">shot {{ s.index }} · {{ s.start_tc }}</span>
+            <select id="dismissed-target-{{ s.id }}">
+              <option value="">Assign to setup…</option>
+              {% for g in ws.setups %}<option value="{{ g.id }}">{{ g.name }}{% if g.parent_id is not none %} · variant{% endif %}</option>{% endfor %}
+            </select>
+            <button type="button" onclick="assignFromSelect({{ s.id }}, 'dismissed-target-{{ s.id }}')">Assign to setup</button>
             <button type="button" onclick="dismissShots([{{ s.id }}], true)">Restore</button>
           </div>
           {% endfor %}
@@ -630,8 +635,7 @@
     async function assignFromSelect(shotId, selectId) {
       const gid = Number(document.getElementById(selectId).value);
       if (!gid) { alert('Pick a setup first'); return; }
-      await assignShotToGroup(shotId, gid);
-      reloadPreservingView();
+      await organize('assign', {group_id: gid, shot_ids: [shotId]});
     }
 
     // -- corrections / before-after ----------------------------------------

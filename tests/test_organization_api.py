@@ -128,6 +128,26 @@ def test_dismiss_and_restore_broll(tmp_path):
     assert shots[3].id in org["queue_shot_ids"]
 
 
+def test_assigning_a_dismissed_shot_restores_it_from_intentional(tmp_path):
+    client, asset, shots, alice, bob = _org_client(tmp_path)
+    setup = client.post(
+        f"/api/assets/{asset.id}/groups", json={"name": "existing", "kind": "setup"}
+    ).json()
+    client.post(
+        f"/api/assets/{asset.id}/organize",
+        json={"action": "dismiss", "shot_ids": [shots[3].id]},
+    )
+
+    r = client.post(
+        f"/api/assets/{asset.id}/organize",
+        json={"action": "assign", "group_id": setup["id"], "shot_ids": [shots[3].id]},
+    )
+    assert r.status_code == 200
+    shot = next(s for s in _workspace(client, asset.id)["shots"] if s["id"] == shots[3].id)
+    assert shot["group_id"] == setup["id"]
+    assert shot["excused"] is False
+
+
 def test_send_to_broll_pile_and_restore(tmp_path):
     client, asset, shots, alice, bob = _org_client(tmp_path)
 
@@ -172,6 +192,10 @@ def test_workspace_does_not_move_existing_assignments(tmp_path):
 
 def test_needs_organization_html_buckets(tmp_path):
     client, asset, shots, alice, bob = _org_client(tmp_path)
+    client.post(
+        f"/api/assets/{asset.id}/organize",
+        json={"action": "dismiss", "shot_ids": [shots[3].id]},
+    )
     body = client.get("/").text
 
     assert "Needs organization" in body
@@ -181,8 +205,8 @@ def test_needs_organization_html_buckets(tmp_path):
     assert "Create setup from this" in body
     assert "Add to setup" in body
     assert "Dismiss / keep unorganized" in body
-    assert "Mark intentional" in body
     assert "Send to B-roll" in body
     assert "B-roll pile" in body
+    assert "Assign to setup" in body
     # The raw timecode checklist is gone; the visual buckets replace it.
     assert "Unassigned shots" not in body

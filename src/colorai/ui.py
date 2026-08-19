@@ -703,8 +703,9 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
         for shot_id in shot_ids:
             if payload.action in ("create_setup", "assign", "send_to_broll"):
                 shot = assign_shot_group(store, shot_id, group_id)
-                if payload.action == "send_to_broll" and shot is not None:
-                    # B-roll is a visible bucket; it is not an outlier/QC exception.
+                if shot is not None:
+                    # A deliberate destination is not an outlier/QC exception.
+                    # This also makes assigning a dismissed shot a real recovery.
                     set_excused(store, shot_id, False)
             elif payload.action == "dismiss":
                 shot = set_excused(store, shot_id, True)
