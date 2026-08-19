@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 195 tests passing.
+Current progress. 203 tests passing.
 
 ## Done
 
@@ -44,6 +44,10 @@ Current progress. 195 tests passing.
   reference (hero shot or median), proposing `rgb_balance` only within a
   subject. Subjects are human-editable: rename, reassign, merge, split, and
   set a reference shot.
+- **Agent integration (MCP)** — `colorai mcp` exposes read/refine tools so an
+  LLM/agent (Claude Code, Codex, ChatGPT) can review the deterministic
+  first-pass and adjust grouping + corrections; its reasoning is persisted as
+  `Note` rows for human review.
 - **Restoration** — deterministic primitives (cross-dissolve, temporal median,
   nearest-good-frame) and a proposal boundary; generative tier is an explicit,
   approval-gated interface awaiting a local model.
@@ -60,9 +64,9 @@ Current progress. 195 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 195 tests across timecode, project model, migrations, ingest, shot
+- 203 tests across timecode, project model, migrations, ingest, shot
   detection, frames, metrics, pipeline, correction, analysis, face, skin,
-  skin analysis, restoration, UI, and CLI.
+  skin analysis, restoration, MCP, UI, and CLI.
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45
   shots, three skin subjects separated, and per-subject skin drift flagged
   with proposed corrections.

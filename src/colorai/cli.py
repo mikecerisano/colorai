@@ -50,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--project", default="data/project.sqlite3", help="Project database path."
     )
 
+    sub.add_parser(
+        "mcp",
+        help="Start the MCP server (stdio) for Claude Code / Codex / ChatGPT integration.",
+    )
+
     return parser
 
 
@@ -110,6 +115,13 @@ def _run_db_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_mcp(args: argparse.Namespace) -> int:
+    from colorai.mcp_server import main as mcp_main
+
+    mcp_main()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -122,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_ui(args)
     if args.command == "db" and args.db_command == "migrate":
         return _run_db_migrate(args)
+    if args.command == "mcp":
+        return _run_mcp(args)
     print(f"error: 'colorai {args.command}' is not implemented yet")
     return 1
 

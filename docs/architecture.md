@@ -155,6 +155,25 @@ genuinely damaged temporal intervals and is modeled separately — see
 `src/colorai/restoration.py` for the deterministic tier and the approval-gated
 generative boundary, and `face.py` for face-region skin sampling.
 
+## Agent integration (MCP)
+
+ColorAI is the deterministic **body**; an LLM/agent is the **brain** that
+interprets measurements and explains decisions. The seam is vendor-neutral:
+
+- `colorai mcp` starts an MCP server (`src/colorai/mcp_server.py`) over stdio,
+  which Claude Code, Codex, ChatGPT, or any MCP client can drive with no
+  per-vendor integration.
+- Tools split into **read** (projects, shots, metrics, skin subjects,
+  deviations, notes) and **refine** (assign/merge/rename subjects, set the
+  reference shot, add/toggle/delete corrections, and annotate).
+- Agent reasoning is persisted as `Note` rows tied to an asset/shot/subject,
+  so the filmmaker reviews *why* the agent changed something, not just the
+  numbers. The human always approves the final result.
+
+This is the loop: the engine does the mechanical first pass (detect, embed,
+group, sample, propose); the agent reviews and adjusts with reasoning; the
+human approves.
+
 ## Conventions and decisions
 
 - **Frame numbers are zero-based and bounds are inclusive** everywhere; the
@@ -164,8 +183,8 @@ generative boundary, and `face.py` for face-region skin sampling.
   aware datetimes deliberately if this ever changes.
 - **Deterministic filenames** for stills (`shot_0001_frame_000050.png`) make
   extraction idempotent and reproducible.
-- **Frame-accurate extraction** uses `select=eq(n\,N)` (decodes from start);
-  a keyframe-seek fast path is a documented future optimization for long-form
-  media.
+- **Seek-optimized extraction** uses input seek (`-ss <t>`) for fast, frame-
+  accurate stills on long masters; the exact `select=eq(n\,N)` path remains as
+  a fallback.
 - **The middle frame** is the representative still. A content-aware "best
   frame" heuristic (sharpest, most representative) is a future refinement.

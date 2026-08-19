@@ -27,6 +27,10 @@ python3.12 -m venv .venv
 
 # Start the local review UI
 .venv/bin/colorai ui --project data/project.sqlite3 --port 8000
+
+# Expose the engine to an agent (Claude Code / Codex / ChatGPT) via MCP
+.venv/bin/pip install -e ".[agent]"
+.venv/bin/colorai mcp
 ```
 
 ## License

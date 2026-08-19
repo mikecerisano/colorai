@@ -38,6 +38,9 @@ dev = [
 face = [
     "mediapipe>=0.10.14,<1",
 ]
+agent = [
+    "mcp>=1.2,<2",
+]
 
 [project.scripts]
 colorai = "colorai.cli:main"

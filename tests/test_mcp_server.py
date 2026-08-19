@@ -1,0 +1,128 @@
+"""Tests for the MCP server tools and agent notes."""
+
+from __future__ import annotations
+
+import pytest
+
+from colorai import mcp_server
+from colorai.project import ProjectStore, SkinMetric, make_shots
+from colorai.skin_analysis import create_subject
+
+
+def _make_store(tmp_path):
+    db = tmp_path / "project.sqlite3"
+    store = ProjectStore.create(db)
+    project = store.create_project("film")
+    asset = store.add_asset(project.id, source_path="/media/m.mov", frame_rate=25.0)
+    shots = make_shots(asset, [(0, 24), (25, 49)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        for s in shots:
+            session.refresh(s)
+    subject = create_subject(store, asset.id, "Alice")
+    with store.session() as session:
+        session.add(
+            SkinMetric(
+                shot_id=shots[0].id,
+                face_index=0,
+                mean_b=0.35,
+                mean_g=0.38,
+                mean_r=0.58,
+                sample_pixels=100,
+                subject_id=subject.id,
+            )
+        )
+        session.commit()
+    return str(db), asset, shots, subject
+
+
+def test_list_and_get(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+
+    projects = mcp_server.list_projects(db)
+    assert projects == [{"id": 1, "name": "film"}]
+
+    assets = mcp_server.list_assets(db)
+    assert assets[0]["source_path"] == "/media/m.mov"
+
+    shot_list = mcp_server.list_shots(db, asset.id)
+    assert [s["index"] for s in shot_list] == [0, 1]
+
+    detail = mcp_server.get_shot(db, shots[0].id)
+    assert detail["start_timecode"] == "00:00:00:00"
+    assert detail["skin_faces"][0]["subject_id"] == subject.id
+
+
+def test_subject_refine_tools(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+
+    mcp_server.rename_subject(db, subject.id, "Interviewee 1")
+    subjects = mcp_server.list_subjects(db, asset.id)
+    assert subjects[0]["name"] == "Interviewee 1"
+
+    mcp_server.set_reference(db, subject.id, shots[0].id)
+    subjects = mcp_server.list_subjects(db, asset.id)
+    assert subjects[0]["reference_shot_id"] == shots[0].id
+
+
+def test_merge_subjects(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+    other = create_subject(ProjectStore.open(db), asset.id, "Bob")
+    mcp_server.merge_subjects(db, subject.id, other.id)
+    subjects = mcp_server.list_subjects(db, asset.id)
+    assert [s["name"] for s in subjects] == ["Alice"]
+
+
+def test_correction_tools(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+
+    created = mcp_server.add_correction(
+        db, shots[0].id, "exposure", {"gain": 2.0}
+    )
+    assert created["kind"] == "exposure"
+    assert mcp_server.toggle_correction(db, created["id"], False) == "ok"
+    assert mcp_server.get_shot(db, shots[0].id)["corrections"][0]["enabled"] is False
+    assert mcp_server.delete_correction(db, created["id"]) == "ok"
+    assert mcp_server.get_shot(db, shots[0].id)["corrections"] == []
+
+
+def test_add_correction_rejects_invalid_kind(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+    with pytest.raises(ValueError):
+        mcp_server.add_correction(db, shots[0].id, "bogus", {})
+
+
+def test_notes(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+
+    note = mcp_server.add_note(
+        db,
+        asset.id,
+        "shot 0 skin is the reference for this subject",
+        author="claude",
+        shot_id=shots[0].id,
+    )
+    assert note["author"] == "claude"
+
+    notes = mcp_server.list_notes(db, asset.id)
+    assert len(notes) == 1
+    assert notes[0]["shot_id"] == shots[0].id
+
+
+def test_skin_consistency_tool(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+    result = mcp_server.skin_consistency(db, asset.id)
+    # Only one face assigned; it is its own reference, so no outlier.
+    assert len(result) == 1
+    assert result[0]["is_outlier"] is False
+
+
+def test_mcp_server_lists_tools():
+    import asyncio
+
+    tools = asyncio.run(mcp_server.mcp.list_tools())
+    names = {t.name for t in tools}
+    assert "get_shot" in names
+    assert "assign_face" in names
+    assert "add_note" in names

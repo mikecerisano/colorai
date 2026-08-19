@@ -32,6 +32,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -263,6 +264,31 @@ class SkinMetric(Base):
     subject: Mapped["Subject | None"] = relationship(back_populates="faces")
 
 
+class Note(Base):
+    """Agent (or human) annotation attached to an asset, shot, or subject.
+
+    This is where an LLM/agent's reasoning lives: it can explain *why* it
+    regrouped faces, flagged a shot, or proposed a correction, so the
+    filmmaker reviews judgments, not just numbers.
+    """
+
+    __tablename__ = "notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("media_assets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    shot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shots.id", ondelete="CASCADE"), nullable=True
+    )
+    subject_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subjects.id", ondelete="CASCADE"), nullable=True
+    )
+    author: Mapped[str] = mapped_column(String(64), nullable=False, default="agent")
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
 # Silence unused-import lint for re-exported names.
 __all__ = [
     "Base",
@@ -274,5 +300,6 @@ __all__ = [
     "Correction",
     "SkinMetric",
     "Subject",
+    "Note",
     "utcnow",
 ]

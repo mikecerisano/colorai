@@ -49,6 +49,7 @@ src/colorai/
   restoration.py     deterministic recovery + generative boundary
   pipeline.py        analyze_master orchestration
   ui.py              FastAPI review app + correction/analysis API
+  mcp_server.py      MCP server for agent integration (colorai mcp)
   core/timecode.py   SMPTE timecode <-> frame conversion
   project/models.py  SQLAlchemy model (Project/Asset/Shot/...)
   project/store.py   ProjectStore + construction helpers
