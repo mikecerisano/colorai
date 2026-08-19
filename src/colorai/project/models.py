@@ -90,6 +90,13 @@ class MediaAsset(Base):
     transfer: Mapped[str | None] = mapped_column(String(32))
     codec_name: Mapped[str | None] = mapped_column(String(64))
 
+    # Robust source identity (fast content fingerprint) so re-analysis can
+    # recognize the same master and resume instead of reprocessing.
+    source_hash: Mapped[str | None] = mapped_column(String(128))
+    # The shot-detection parameters used when this asset was last analyzed;
+    # resume only reuses results when they match.
+    analyze_params: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
     # "NDF" or "DF", derived from ``frame_rate``.
     timecode_format: Mapped[str] = mapped_column(String(3), nullable=False, default="NDF")
 

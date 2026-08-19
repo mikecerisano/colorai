@@ -162,6 +162,8 @@ class ProjectStore:
             "color_space",
             "transfer",
             "codec_name",
+            "source_hash",
+            "analyze_params",
         }
         unexpected = set(probe_fields) - known
         if unexpected:

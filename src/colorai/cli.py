@@ -33,6 +33,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_analyze.add_argument(
         "--project", default="data/project.sqlite3", help="Project database path."
     )
+    p_analyze.add_argument(
+        "--force", action="store_true", help="Re-analyze even if results are cached."
+    )
 
     p_ui = sub.add_parser(
         "ui",
@@ -91,7 +94,9 @@ def _run_analyze(args: argparse.Namespace) -> int:
         project_id = store.create_project(Path(args.master).stem).id
 
     stills_dir = project_path.parent / "stills"
-    result = analyze_master(store, project_id, args.master, stills_dir=stills_dir)
+    result = analyze_master(
+        store, project_id, args.master, stills_dir=stills_dir, resume=not args.force
+    )
 
     print(f"asset : {result.asset.source_path}")
     print(f"shots : {len(result.shots)}")

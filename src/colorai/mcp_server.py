@@ -63,6 +63,9 @@ def list_assets(project: str) -> list[dict]:
                 "frame_count": a.frame_count,
                 "duration_seconds": a.duration_seconds,
                 "status": a.status,
+                "color_space": a.color_space,
+                "transfer": a.transfer,
+                "source_hash": a.source_hash,
             }
             for a in session.query(MediaAsset).order_by(MediaAsset.id).all()
         ]
@@ -494,8 +497,13 @@ def add_note(
 
 
 @mcp.tool()
-def analyze_master(project: str, master: str, project_name: str | None = None) -> dict:
-    """Run the full pipeline on a master and persist results."""
+def analyze_master(
+    project: str, master: str, project_name: str | None = None, resume: bool = True
+) -> dict:
+    """Run the full pipeline on a master and persist results.
+
+    ``resume=True`` reuses a previous analysis when the master is unchanged.
+    """
     from colorai.pipeline import analyze_master as run_analysis
 
     path = Path(project)
@@ -506,7 +514,9 @@ def analyze_master(project: str, master: str, project_name: str | None = None) -
     else:
         project_id = store.create_project(project_name or Path(master).stem).id
 
-    result = run_analysis(store, project_id, master, stills_dir=path.parent / "stills")
+    result = run_analysis(
+        store, project_id, master, stills_dir=path.parent / "stills", resume=resume
+    )
     return {
         "asset_id": result.asset.id,
         "shots": len(result.shots),
