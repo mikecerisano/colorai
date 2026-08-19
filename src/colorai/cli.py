@@ -43,6 +43,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_ui.add_argument("--port", type=int, default=8000, help="Port to listen on.")
 
+    p_render = sub.add_parser(
+        "render",
+        help="Render an asset with its approved shot corrections applied.",
+    )
+    p_render.add_argument(
+        "--project", default="data/project.sqlite3", help="Project database path."
+    )
+    p_render.add_argument(
+        "--asset", type=int, default=None, help="Asset id (defaults to the first asset)."
+    )
+    p_render.add_argument("--out", required=True, help="Output video path.")
+    p_render.add_argument("--codec", default="libx264", help="Output codec.")
+    p_render.add_argument("--crf", type=int, default=18, help="Quality (lower = better).")
+    p_render.add_argument(
+        "--preset", default="medium", help="x264 speed/quality preset."
+    )
+
     p_db = sub.add_parser("db", help="Database management.")
     db_sub = p_db.add_subparsers(dest="db_command", metavar="COMMAND")
     p_db_migrate = db_sub.add_parser("migrate", help="Apply pending schema migrations.")
@@ -97,6 +114,37 @@ def _run_ui(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_render(args: argparse.Namespace) -> int:
+    from colorai.project import ProjectStore
+    from colorai.render import render_master
+
+    store = ProjectStore.open(args.project)
+    with store.session() as session:
+        from colorai.project.models import MediaAsset
+
+        asset = (
+            session.get(MediaAsset, args.asset)
+            if args.asset is not None
+            else session.query(MediaAsset).order_by(MediaAsset.id).first()
+        )
+        if asset is None:
+            print("error: no asset found in project")
+            return 1
+        asset_id = asset.id
+
+    print(f"rendering asset {asset_id} -> {args.out}")
+    out = render_master(
+        store,
+        asset_id,
+        args.out,
+        codec=args.codec,
+        crf=args.crf,
+        preset=args.preset,
+    )
+    print(f"rendered {out}")
+    return 0
+
+
 def _run_db_migrate(args: argparse.Namespace) -> int:
     import os
 
@@ -132,6 +180,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_analyze(args)
     if args.command == "ui":
         return _run_ui(args)
+    if args.command == "render":
+        return _run_render(args)
     if args.command == "db" and args.db_command == "migrate":
         return _run_db_migrate(args)
     if args.command == "mcp":

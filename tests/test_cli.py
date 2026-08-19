@@ -33,6 +33,16 @@ def test_ui_subcommand_declared():
     assert args.port == 9000
 
 
+def test_render_subcommand_declared():
+    parser = build_parser()
+    args = parser.parse_args(
+        ["render", "--project", "/tmp/x.sqlite3", "--out", "/tmp/y.mp4", "--crf", "20"]
+    )
+    assert args.command == "render"
+    assert args.out == "/tmp/y.mp4"
+    assert args.crf == 20
+
+
 def test_version_matches_package():
     from importlib.metadata import version
 
