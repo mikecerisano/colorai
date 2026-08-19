@@ -15,10 +15,11 @@ experiments land.
   interchange points; our shot model already stores both frame numbers and
   SMPTE timecode.
 - `.cube` LUTs are now first-class (`lut` correction kind, `lutcube.py`). They
-  are applied in the **linear BT.709 working space** and clamped to the file's
-  `DOMAIN_MIN`/`DOMAIN_MAX`; a Resolve LUT authored in log or display space
-  must be converted to the working space first (to-verify: whether to add a
-  `space` tag for automatic display↔linear remapping).
+  carry a `space` tag — `linear` (applied in the linear BT.709 working space)
+  or `display` (applied on gamma-encoded values, the usual Resolve Rec.709
+  case) — and are clamped to the file's `DOMAIN_MIN`/`DOMAIN_MAX`. A Resolve
+  LUT authored in log space still needs a log→linear/display conversion first
+  (a future refinement).
 - Scripting options: the **DaVinci Resolve scripting API** (Python/Lua, local
   Studio license), or file-based interchange (LUT/CDL/EDL) that requires no
   Resolve license at all. **Plan:** prefer file-based interchange for the

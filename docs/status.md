@@ -118,11 +118,12 @@ Current progress. 344 tests passing.
   trigger.
 - **Tone curves + `.cube` LUTs** — a `curve` kind (monotonic control points,
   `rgb` / `per_channel` / `luma` modes) and a `lut` kind (1D/3D `.cube`,
-  trilinear/linear interpolation, domain clamping) both applied in linear
-  BT.709 light. `lutcube.py` parses `.cube` files, fingerprints them by content
-  hash (persisted on the correction), and caches parse results keyed by
-  `(path, mtime, size)`. Preview and render use the same transform, so parity
-  is inherent; LUT files are read-only.
+  trilinear/linear interpolation, domain clamping), with a `space` tag:
+  `linear` (scene-referred, default) or `display` (gamma — the usual Resolve
+  Rec.709 case). `lutcube.py` parses `.cube` files, fingerprints them by
+  content hash (persisted on the correction), and caches parse results keyed
+  by `(path, mtime, size)`. Preview and render use the same transform, so
+  parity is inherent; LUT files are read-only.
 - **Docs** — `architecture.md`, `dependency-audit.md`, `research-notes.md`,
   `AGENTS.md`, this file.
 
@@ -130,12 +131,12 @@ Current progress. 344 tests passing.
 
 - Automatic visual camera-angle inference — **intentionally not implemented**;
   setup/camera labels are human/agent-assigned (by design).
+- OCIO integration for non-Rec.709 masters (LUT display/linear spaces and
+  curves are done; OCIO managed color is the remaining piece).
 - Bundle the generative model files themselves (RIFE + LaMa ONNX) — the loader
   and status surface are wired; the models are large and gitignored.
 - Per-model RIFE/LaMa inference I/O (pre/post-processing), which depends on the
   exact ONNX export contract of the chosen checkpoint.
-- OCIO / LUT / curve support for non-Rec.709 masters (working space is fixed
-  BT.709 for now).
 - Rolling-shutter detection (needs camera-motion priors).
 - Long-form/GPU acceleration for full-master render (the Python streaming path
   is correctness-first, not fast).

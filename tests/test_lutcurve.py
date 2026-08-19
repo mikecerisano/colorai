@@ -192,6 +192,21 @@ def test_lut_gain_matches_exposure_in_linear(tmp_path):
     assert np.allclose(lut_out, exp_out, atol=1e-4)
 
 
+def test_lut_display_space_applies_in_gamma(tmp_path):
+    # A display-space x2 LUT doubles the *gamma* value: 0.5 -> 1.0 (clamped),
+    # rather than the linear-domain result (~0.69 after re-encode).
+    p = _write(tmp_path, "gain.cube", GAIN_1D)
+    out = apply_correction(_px(0.5, 0.5, 0.5), "lut", {"path": str(p), "space": "display"})
+    assert out[0, 0].tolist() == pytest.approx([1.0, 1.0, 1.0], abs=1e-4)
+
+
+def test_lut_space_validation(tmp_path):
+    p = _write(tmp_path, "id.cube", IDENTITY_1D)
+    validate_correction("lut", {"path": str(p), "space": "display"})  # accepted
+    with pytest.raises(ValueError):
+        validate_correction("lut", {"path": str(p), "space": "log"})
+
+
 # -- validation -----------------------------------------------------------
 
 @pytest.mark.parametrize(

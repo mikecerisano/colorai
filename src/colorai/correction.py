@@ -26,7 +26,9 @@ Supported kinds (see :func:`validate_correction` for parameter shapes):
 * ``hue_rotate``  — hue rotation in HSV space (degrees)
 * ``curve``       — tone curve from monotonic control points
                     (``rgb`` / ``per_channel`` / ``luma`` modes)
-* ``lut``         — a ``.cube`` LUT (1D/3D) applied in linear light
+* ``lut``         — a ``.cube`` LUT (1D/3D); ``space: "linear"`` (default,
+                    scene-referred) or ``"display"`` (gamma — the usual
+                    Resolve Rec.709 case)
 """
 
 from __future__ import annotations
@@ -135,8 +137,8 @@ def validate_correction(kind: str, parameters: dict[str, Any]) -> None:
         path = parameters.get("path")
         if not isinstance(path, str) or not path.strip():
             raise ValueError("lut path must be a non-empty string")
-        if parameters.get("space", "linear") != "linear":
-            raise ValueError("lut space must be 'linear'")
+        if parameters.get("space", "linear") not in ("linear", "display"):
+            raise ValueError("lut space must be 'linear' or 'display'")
         return
 
     raise ValueError(f"unknown correction kind: {kind!r}")
@@ -203,6 +205,14 @@ def apply_correction(image_rgb: np.ndarray, kind: str, parameters: dict[str, Any
         hsv = cv2.cvtColor(u8, cv2.COLOR_RGB2HSV)
         hsv[..., 0] = (hsv[..., 0].astype(np.int32) + int(round(degrees / 2.0))) % 180
         out = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB).astype(np.float64) / 255.0
+        return _finish(out, was_uint8)
+
+    if kind == "lut" and parameters.get("space", "linear") == "display":
+        # Display-referred LUT (authored in gamma space — the usual Resolve
+        # Rec.709 .cube): apply on the gamma-encoded values, not linear light.
+        from colorai.lutcube import apply_cube, load_cube
+
+        out = apply_cube(load_cube(parameters["path"]), f)
         return _finish(out, was_uint8)
 
     # Grade in linear (scene-referred) light.
