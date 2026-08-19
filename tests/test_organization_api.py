@@ -230,5 +230,23 @@ def test_sidebar_links_to_distinct_organization_destinations(tmp_path):
     assert "showOrganizationSection('broll-pile')" in body
     assert "intentional-card" in body
     assert "Send to B-roll" in body
+
+
+def test_intentional_moves_are_applied_as_one_batch(tmp_path):
+    client, asset, shots, alice, bob = _org_client(tmp_path)
+    setup = client.post(
+        f"/api/assets/{asset.id}/groups", json={"name": "existing", "kind": "setup"}
+    ).json()
+    client.post(
+        f"/api/assets/{asset.id}/organize",
+        json={"action": "dismiss", "shot_ids": [shots[2].id, shots[3].id]},
+    )
+
+    body = client.get("/").text
+    assert "Apply moves" in body
+    assert "applyIntentionalMoves" in body
+    assert "data-intentional-shot" in body
+    # Per-card moves would reload and discard the other cards' selections.
+    assert "assignFromSelect" not in body[body.index('id="intentional-shots"'):body.index('id="broll-pile"')]
     # The raw timecode checklist is gone; the visual buckets replace it.
     assert "Unassigned shots" not in body

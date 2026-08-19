@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 403 tests passing.
+Current progress. 404 tests passing.
 
 ## Done
 
@@ -209,7 +209,7 @@ Current progress. 403 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 403 tests across timecode, project model, migrations (incl. legacy
+- 404 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
   auto-assignment), correction, LUT/curve, render, resumability, editorial,
   references, matching (incl. variants), analysis, face (incl. bbox), skin,

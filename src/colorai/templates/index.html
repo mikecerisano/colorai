@@ -460,19 +460,21 @@
         {% if org.dismissed_shots %}
         <section id="intentional-shots" style="margin-top:1rem">
           <h2>Dismissed / intentional ({{ org.dismissed_shots|length }})</h2>
-          <p class="muted">Kept out of automatic QC. Restore, reassign, or send to B-roll at any time.</p>
+          <div class="row">
+            <p class="muted">Kept out of automatic QC. Choose any destinations, then apply them together.</p>
+            <button type="button" onclick="applyIntentionalMoves()">Apply moves <span id="intentional-move-count"></span></button>
+          </div>
           <div class="filmstrip">
           {% for s in org.dismissed_shots %}
           <div class="shot-thumb intentional-card" data-shot="{{ s.id }}">
             <img src="/shots/{{ s.id }}/preview.png" alt="intentional shot {{ s.index }}">
             <div class="meta">
             <span><span class="badge intentional">intentional</span> shot {{ s.index }} · {{ s.start_tc }}</span>
-            <select id="dismissed-target-{{ s.id }}">
+            <select id="dismissed-target-{{ s.id }}" class="intentional-target" data-intentional-shot="{{ s.id }}" onchange="updateIntentionalMoves()">
               <option value="">Assign to setup…</option>
               {% for g in ws.setups %}<option value="{{ g.id }}">{{ g.name }}{% if g.parent_id is not none %} · variant{% endif %}</option>{% endfor %}
             </select>
             <div class="row">
-              <button type="button" onclick="assignFromSelect({{ s.id }}, 'dismissed-target-{{ s.id }}')">Move</button>
               <button type="button" onclick="sendToBroll([{{ s.id }}])">Send to B-roll</button>
               <button type="button" onclick="dismissShots([{{ s.id }}], true)">Restore</button>
             </div>
@@ -715,6 +717,26 @@
     }
     async function dismissShots(ids, restore) {
       await organize(restore ? 'restore' : 'dismiss', {shot_ids: ids});
+    }
+    function intentionalMoveEntries() {
+      return [...document.querySelectorAll('.intentional-target')]
+        .map(select => ({shotId: Number(select.dataset.intentionalShot), groupId: Number(select.value)}))
+        .filter(move => move.shotId && move.groupId);
+    }
+    function updateIntentionalMoves() {
+      const count = intentionalMoveEntries().length;
+      document.getElementById('intentional-move-count').textContent = count ? `(${count})` : '';
+    }
+    async function applyIntentionalMoves() {
+      const byGroup = new Map();
+      for (const move of intentionalMoveEntries()) {
+        byGroup.set(move.groupId, [...(byGroup.get(move.groupId) || []), move.shotId]);
+      }
+      if (!byGroup.size || ASSET_ID === null) { alert('Choose a destination for at least one shot'); return; }
+      for (const [groupId, shotIds] of byGroup) {
+        await request(`/api/assets/${ASSET_ID}/organize`, 'POST', {action: 'assign', group_id: groupId, shot_ids: shotIds});
+      }
+      reloadPreservingView();
     }
     async function assignFromSelect(shotId, selectId) {
       const gid = Number(document.getElementById(selectId).value);
