@@ -3,8 +3,6 @@ annotated-types==0.8.0
 anyio==4.14.2
 certifi==2026.7.22
 click==8.4.2
-# Editable Git install with no remote (colorai==0.1.0)
--e /Users/mike/Desktop/Desktop/Code Projects/ColorAI
 coverage==7.15.4
 fastapi==0.141.1
 h11==0.16.0
