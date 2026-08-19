@@ -277,6 +277,30 @@ def test_sidebar_setup_cards_are_drop_targets_for_shot_moves(tmp_path):
     assert f'ondrop="dropShotInGroup(event, {variant["id"]})"' in body
 
 
+def test_setup_workspace_shows_total_members_and_participants(tmp_path):
+    client, asset, shots, alice, bob = _client(tmp_path)
+    setup = client.post(
+        f"/api/assets/{asset.id}/groups", json={"name": "shared interview", "kind": "setup"}
+    ).json()
+    variant = client.post(
+        f"/api/assets/{asset.id}/groups",
+        json={"name": "night", "kind": "variant", "parent_id": setup["id"]},
+    ).json()
+    client.put(f"/api/shots/{shots[0].id}/group", json={"group_id": setup["id"]})
+    client.put(f"/api/shots/{shots[1].id}/group", json={"group_id": variant["id"]})
+
+    ws = client.get(f"/api/assets/{asset.id}/workspace").json()
+    setup_ws = next(g for g in ws["setups"] if g["id"] == setup["id"])
+    assert setup_ws["shot_count"] == 2
+    assert setup_ws["variant_count"] == 1
+    assert [p["name"] for p in setup_ws["participants"]] == ["Alice", "Bob"]
+
+    body = client.get("/").text
+    assert "Participants / references" in body
+    assert "Set reference" in body
+    assert "2 shots · 1 variant" in body
+
+
 def test_active_proposal_skips_rejected_and_uses_newest_suggested(tmp_path):
     client, asset, shots, alice, bob = _client(tmp_path)
     setup = client.post(

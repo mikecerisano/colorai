@@ -18,6 +18,7 @@ from colorai.core.timecode import frames_to_timecode
 from colorai.project.models import (
     Correction,
     MediaAsset,
+    ReferenceProposal,
     Shot,
     ShotGroup,
 )
@@ -178,10 +179,15 @@ def rename_group(store: ProjectStore, group_id: int, name: str) -> ShotGroup | N
 
 
 def delete_group(store: ProjectStore, group_id: int) -> None:
-    """Delete a group; its shots revert to ungrouped (``group_id`` NULL)."""
+    """Delete a group, its scoped references, and unassign its shots."""
     with store.session() as session:
         session.query(Shot).filter(Shot.group_id == group_id).update(
             {Shot.group_id: None}, synchronize_session=False
+        )
+        # A reference without its matching scope must never silently become a
+        # global reference when the group is removed.
+        session.query(ReferenceProposal).filter_by(group_id=group_id).delete(
+            synchronize_session=False
         )
         group = session.get(ShotGroup, group_id)
         if group is not None:

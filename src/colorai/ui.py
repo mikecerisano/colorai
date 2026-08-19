@@ -159,6 +159,20 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
             g.id: [shot_brief(s) for s in shots if s.group_id in member_group_ids[g.id]]
             for g in groups
         }
+        participant_rows_by_group: dict[int, list[dict]] = {}
+        subject_by_id = {s.id: s for s in subjects}
+        for group in groups:
+            face_counts: dict[int, int] = {}
+            member_ids = set(member_group_ids[group.id])
+            for face in face_rows:
+                if face.subject_id is not None and any(
+                    shot.id == face.shot_id and shot.group_id in member_ids for shot in shots
+                ):
+                    face_counts[face.subject_id] = face_counts.get(face.subject_id, 0) + 1
+            participant_rows_by_group[group.id] = [
+                {"id": subject_id, "name": subject_by_id[subject_id].name, "face_count": count}
+                for subject_id, count in sorted(face_counts.items())
+            ]
 
         proposal_dicts = [
             {
@@ -270,6 +284,9 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                     "camera": g.camera,
                     "parent_id": g.parent_id,
                     "shot_ids": [s.id for s in shots if s.group_id == g.id],
+                    "shot_count": len(members_by_group[g.id]),
+                    "variant_count": len(children_by_parent.get(g.id, [])),
+                    "participants": participant_rows_by_group[g.id],
                     "subject_ids": sorted(
                         {
                             m.subject_id

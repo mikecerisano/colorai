@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 396 tests passing.
+Current progress. 401 tests passing.
 
 ## Done
 
@@ -162,6 +162,12 @@ Current progress. 396 tests passing.
   `restore` / `send_to_broll` / `restore_broll`). The B-roll pile is a generic
   editorial group, deliberately excluded from setup matching. See
   `colorai/organization.py`.
+- **Setup-first review refinement** — setup cards report their total member
+  shots (including variants), and a shared multi-person setup exposes its
+  participants separately. A human can choose and approve a reference for
+  each participant without duplicating the shots or treating identities as
+  separate lighting setups. Empty setup cleanup removes its scoped reference
+  proposals rather than letting them silently become global references.
 - **Temporal QC** — `qc.py` detects frame-to-frame flicker, per-shot clipped
   highlights / crushed blacks (from stored luma percentiles), and blank /
   duplicate damaged-frame signatures; exposed via MCP. Reports carry
@@ -203,7 +209,7 @@ Current progress. 396 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 396 tests across timecode, project model, migrations (incl. legacy
+- 401 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
   auto-assignment), correction, LUT/curve, render, resumability, editorial,
   references, matching (incl. variants), analysis, face (incl. bbox), skin,

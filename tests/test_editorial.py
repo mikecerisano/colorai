@@ -82,6 +82,24 @@ def test_group_crud_and_assignment():
     assert list_groups(store, asset.id) == []
 
 
+def test_delete_group_removes_its_reference_proposals():
+    store = ProjectStore.create(":memory:")
+    asset, shots = _asset_with_shots(store)
+    group = create_group(store, asset.id, "interview", kind="setup")
+    assign_shot_group(store, shots[0].id, group.id)
+    from colorai.project import ReferenceProposal
+    from colorai.references import propose_reference
+
+    proposal = propose_reference(
+        store, asset_id=asset.id, shot_id=shots[0].id, reason="stale", confidence=0.8,
+        group_id=group.id,
+    )
+    delete_group(store, group.id)
+
+    with store.session() as session:
+        assert session.get(ReferenceProposal, proposal.id) is None
+
+
 def test_split_shot_copies_corrections_and_renumbers():
     store = ProjectStore.create(":memory:")
     asset, shots = _asset_with_shots(store)

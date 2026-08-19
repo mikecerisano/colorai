@@ -92,7 +92,7 @@
             {% if setup.reference_state == "approved" %}<span class="badge approved">approved ref</span>
             {% elif setup.reference_state == "suggested" %}<span class="badge suggested">suggested ref</span>{% endif %}
           </div>
-          <div class="muted">{{ setup.shot_ids|length }} shots</div>
+          <div class="muted">{{ setup.shot_count }} shots{% if setup.variant_count %} · {{ setup.variant_count }} variant{{ '' if setup.variant_count == 1 else 's' }}{% endif %}</div>
         </button>
         {% for v in ws.setups if v.parent_id == setup.id %}
         <button type="button" class="variant-card drop-target" data-setup="{{ v.id }}" onclick="selectSetup({{ v.id }})" ondragover="allowShotDrop(event)" ondragleave="leaveShotDrop(event)" ondrop="dropShotInGroup(event, {{ v.id }})">
@@ -141,6 +141,27 @@
             {% elif setup.reference_state == "suggested" %}<span class="badge suggested">suggested reference</span>
             {% else %}<span class="badge">no reference</span>{% endif %}
           </h2>
+
+          {% if setup.shot_count == 0 and setup.variant_count == 0 %}
+          <div class="ref-panel">
+            <span class="badge needs-review">empty setup</span>
+            <span class="muted">No shots remain in this setup.</span>
+            <button type="button" onclick="deleteEmptySetup({{ setup.id }}, {{ setup.name|tojson }})">Remove empty setup</button>
+          </div>
+          {% endif %}
+
+          <h2>Participants / references</h2>
+          {% if not setup.participants %}<p class="muted">No identified participants in these shots.</p>{% endif %}
+          {% for person in setup.participants %}
+          <div class="row" style="margin:0.35rem 0">
+            <span class="badge">{{ person.name }}</span>
+            <span class="muted">{{ person.face_count }} face samples</span>
+            <select id="participant-reference-{{ setup.id }}-{{ person.id }}">
+              {% for s in setup.all_members %}<option value="{{ s.id }}">shot {{ s.index }} · {{ s.start_tc }}</option>{% endfor %}
+            </select>
+            <button type="button" onclick="setParticipantReference({{ setup.id }}, {{ person.id }}, 'participant-reference-{{ setup.id }}-{{ person.id }}')">Set reference</button>
+          </div>
+          {% endfor %}
 
           {% set ref = setup.active_proposal %}
           {% if ref %}
@@ -547,8 +568,26 @@
       const name = prompt('Lighting variant name');
       if (name && ASSET_ID !== null) { await request(`/api/assets/${ASSET_ID}/groups`, 'POST', {name, kind:'variant', parent_id: parentId}); reloadPreservingView(); }
     }
+    async function deleteEmptySetup(id, name) {
+      if (confirm(`Remove empty setup “${name}”? Its setup-scoped reference history will also be removed.`)) {
+        await request(`/api/groups/${id}`, 'DELETE');
+        reloadPreservingView();
+      }
+    }
     async function approveRef(id) { await request(`/api/reference-proposals/${id}/approve`, 'POST'); reloadPreservingView(); }
     async function rejectRef(id) { await request(`/api/reference-proposals/${id}/reject`, 'POST'); reloadPreservingView(); }
+    async function setParticipantReference(groupId, subjectId, selectId) {
+      const shotId = Number(document.getElementById(selectId).value);
+      if (!shotId || ASSET_ID === null) return;
+      const proposal = await request(`/api/assets/${ASSET_ID}/reference-proposals`, 'POST', {
+        shot_id: shotId, group_id: groupId, subject_id: subjectId,
+        reason: 'Human-selected participant reference', confidence: 1, author: 'human'
+      });
+      if (!proposal.ok) { alert('Could not create reference proposal'); return; }
+      const created = await proposal.json();
+      await request(`/api/reference-proposals/${created.id}/approve`, 'POST');
+      reloadPreservingView();
+    }
 
     async function acceptName(id) {
       await request(`/api/name-suggestions/${id}/accept`, 'POST', {});
