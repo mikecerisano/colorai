@@ -33,8 +33,11 @@ from colorai.project.models import (
     Correction,
     FrameMetrics,
     MediaAsset,
+    Note,
     Project,
     Shot,
+    SkinMetric,
+    Subject,
 )
 from colorai.project.store import ProjectStore
 
@@ -72,6 +75,34 @@ class CorrectionUpdate(BaseModel):
     parameters: dict[str, Any] | None = None
 
 
+class SubjectIn(BaseModel):
+    name: str
+
+
+class SubjectRename(BaseModel):
+    name: str
+
+
+class ReferenceIn(BaseModel):
+    shot_id: int | None = None
+
+
+class MergeIn(BaseModel):
+    keep_id: int
+    drop_id: int
+
+
+class SkinAssign(BaseModel):
+    subject_id: int | None = None
+
+
+class NoteIn(BaseModel):
+    text: str
+    author: str = "human"
+    shot_id: int | None = None
+    subject_id: int | None = None
+
+
 def _deviation_dict(d) -> dict[str, Any]:
     return {
         "shot_id": d.shot_id,
@@ -97,8 +128,12 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
     def index(request: Request):
         shots_view: list[dict] = []
         project_names: list[str] = []
+        asset_id: int | None = None
         with store.session() as session:
             project_names = [p.name for p in session.query(Project).order_by(Project.id)]
+            first_asset = session.query(MediaAsset).order_by(MediaAsset.id).first()
+            if first_asset is not None:
+                asset_id = first_asset.id
             corrections_by_shot: dict[int, list[Correction]] = {}
             for c in session.query(Correction).order_by(Correction.id).all():
                 corrections_by_shot.setdefault(c.shot_id, []).append(c)
@@ -137,7 +172,7 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
         return templates.TemplateResponse(
             request,
             "index.html",
-            {"projects": ", ".join(project_names) or "(none)", "shots": shots_view},
+            {"projects": ", ".join(project_names) or "(none)", "shots": shots_view, "asset_id": asset_id},
         )
 
     # -- correction API ------------------------------------------------------
@@ -243,6 +278,166 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         created = persist_proposals(store, outliers)
         return {"created": [_correction_dict(c) for c in created]}
+
+    # -- subjects, notes, tracking -------------------------------------------
+
+    def _subject_dict(session, subject: Subject) -> dict:
+        faces = (
+            session.query(SkinMetric)
+            .filter_by(subject_id=subject.id)
+            .order_by(SkinMetric.shot_id, SkinMetric.face_index)
+            .all()
+        )
+        timecodes = {s.id: s.start_timecode for s in session.query(Shot).all()}
+        return {
+            "id": subject.id,
+            "name": subject.name,
+            "reference_shot_id": subject.reference_shot_id,
+            "faces": [
+                {
+                    "skin_metric_id": m.id,
+                    "shot_id": m.shot_id,
+                    "face_index": m.face_index,
+                    "timecode": timecodes.get(m.shot_id),
+                    "mean_bgr": [round(m.mean_b, 3), round(m.mean_g, 3), round(m.mean_r, 3)],
+                }
+                for m in faces
+            ],
+        }
+
+    @app.get("/api/assets/{asset_id}/subjects")
+    def list_subjects(asset_id: int):
+        with store.session() as session:
+            if session.get(MediaAsset, asset_id) is None:
+                raise HTTPException(status_code=404, detail="asset not found")
+            subjects = (
+                session.query(Subject)
+                .filter_by(asset_id=asset_id)
+                .order_by(Subject.id)
+                .all()
+            )
+            return [_subject_dict(session, s) for s in subjects]
+
+    @app.post("/api/assets/{asset_id}/subjects", status_code=201)
+    def create_subject(asset_id: int, payload: SubjectIn):
+        from colorai.skin_analysis import create_subject as _create
+
+        subject = _create(store, asset_id, payload.name)
+        return {"id": subject.id, "name": subject.name, "reference_shot_id": None, "faces": []}
+
+    @app.patch("/api/subjects/{subject_id}")
+    def rename_subject(subject_id: int, payload: SubjectRename):
+        from colorai.skin_analysis import rename_subject as _rename
+
+        subject = _rename(store, subject_id, payload.name)
+        if subject is None:
+            raise HTTPException(status_code=404, detail="subject not found")
+        return {"id": subject.id, "name": subject.name}
+
+    @app.post("/api/subjects/{subject_id}/reference")
+    def set_subject_reference(subject_id: int, payload: ReferenceIn):
+        from colorai.skin_analysis import set_reference as _set_ref
+
+        subject = _set_ref(store, subject_id, payload.shot_id)
+        if subject is None:
+            raise HTTPException(status_code=404, detail="subject not found")
+        return {"id": subject.id, "reference_shot_id": subject.reference_shot_id}
+
+    @app.post("/api/subjects/merge")
+    def merge_subjects(payload: MergeIn):
+        from colorai.skin_analysis import merge_subjects as _merge
+
+        _merge(store, payload.keep_id, payload.drop_id)
+        return {"ok": True}
+
+    @app.delete("/api/subjects/{subject_id}", status_code=204)
+    def delete_subject(subject_id: int):
+        from colorai.skin_analysis import delete_subject as _delete
+
+        _delete(store, subject_id)
+
+    @app.patch("/api/skin_metrics/{skin_metric_id}")
+    def assign_skin_metric(skin_metric_id: int, payload: SkinAssign):
+        from colorai.skin_analysis import assign_face, unassign_face
+
+        if payload.subject_id is None:
+            unassign_face(store, skin_metric_id)
+        else:
+            assign_face(store, skin_metric_id, payload.subject_id)
+        return {"ok": True}
+
+    @app.get("/api/assets/{asset_id}/skin-consistency")
+    def skin_consistency(asset_id: int):
+        from colorai.skin_analysis import skin_consistency as _skin
+
+        with store.session() as session:
+            if session.get(MediaAsset, asset_id) is None:
+                raise HTTPException(status_code=404, detail="asset not found")
+        return [
+            {
+                "shot_id": d.shot_id,
+                "face_index": d.face_index,
+                "subject_id": d.subject_id,
+                "distance": round(d.distance, 4),
+                "is_outlier": d.is_outlier,
+                "corrections": [{"kind": c.kind, "parameters": c.parameters} for c in d.corrections],
+            }
+            for d in _skin(store, asset_id)
+        ]
+
+    @app.get("/api/assets/{asset_id}/notes")
+    def list_notes(asset_id: int):
+        with store.session() as session:
+            return [
+                {
+                    "id": n.id,
+                    "shot_id": n.shot_id,
+                    "subject_id": n.subject_id,
+                    "author": n.author,
+                    "text": n.text,
+                }
+                for n in session.query(Note).filter_by(asset_id=asset_id).order_by(Note.id).all()
+            ]
+
+    @app.post("/api/assets/{asset_id}/notes", status_code=201)
+    def add_note(asset_id: int, payload: NoteIn):
+        note = Note(
+            asset_id=asset_id,
+            shot_id=payload.shot_id,
+            subject_id=payload.subject_id,
+            author=payload.author,
+            text=payload.text,
+        )
+        with store.session() as session:
+            session.add(note)
+            session.flush()
+            session.refresh(note)
+        return {"id": note.id, "author": note.author, "text": note.text}
+
+    @app.get("/api/shots/{shot_id}/track")
+    def track_shot(shot_id: int, face_index: int = 0, samples: int = 8):
+        from colorai.tracking import propagate_shot_mask
+
+        with store.session() as session:
+            shot = session.get(Shot, shot_id)
+            if shot is None:
+                raise HTTPException(status_code=404, detail="shot not found")
+            asset = session.get(MediaAsset, shot.asset_id)
+        result = propagate_shot_mask(
+            asset.source_path,
+            shot.start_frame,
+            shot.end_frame,
+            face_index,
+            asset.frame_rate,
+            samples=samples,
+        )
+        return {
+            "tracked_frames": result["tracked_frames"],
+            "median_bgr": result.get("median_bgr"),
+            "stability": result.get("stability"),
+            "mask_coverage": float(result["mask"].mean()) if "mask" in result else None,
+            "error": result.get("error"),
+        }
 
     # -- preview -------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 211 tests passing.
+Current progress. 219 tests passing.
 
 ## Done
 
@@ -29,6 +29,9 @@ Current progress. 211 tests passing.
 - **Correction review API + interactive UX** — JSON endpoints to
   add/propose/toggle/delete corrections and a live corrected preview; the
   review page drives them (propose/toggle/delete) in the browser.
+- **Subject / note / tracking UX** — the review UI lets you rename, merge,
+  delete, and set references on subjects; move/unassign faces; add and read
+  agent notes; and run per-shot temporal skin tracking in the browser.
 - **Shot-to-shot consistency analysis** — flags outlier shots against a median
   (or explicit) reference and proposes deterministic corrections, exposed via
   the review API.
@@ -68,7 +71,7 @@ Current progress. 211 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 211 tests across timecode, project model, migrations, ingest, shot
+- 219 tests across timecode, project model, migrations, ingest, shot
   detection, frames, metrics, pipeline, correction, analysis, face, skin,
   skin analysis, tracking, restoration, MCP, UI, and CLI.
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45

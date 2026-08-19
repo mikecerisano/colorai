@@ -5,8 +5,21 @@
   <title>ColorAI — Review</title>
   <style>
     body { font-family: -apple-system, "Segoe UI", sans-serif; margin: 1.5rem; background: #111; color: #eee; }
-    h1 { font-size: 1.2rem; }
+    h1 { font-size: 1.2rem; margin: 0 0 0.25rem; }
+    h2 { font-size: 1rem; margin: 1.5rem 0 0.5rem; }
     .muted { color: #999; font-size: 0.85rem; }
+    button { background: #2c2c2e; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 0.15rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
+    button:hover { background: #3a3a3c; }
+    select, input, textarea { background: #1c1c1e; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 0.2rem 0.4rem; font-size: 0.8rem; }
+    .subjects { display: flex; flex-direction: column; gap: 0.6rem; }
+    .subject { background: #1c1c1e; border: 1px solid #333; border-radius: 8px; padding: 0.6rem 0.75rem; }
+    .subject .head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+    .subject .name { font-weight: 600; }
+    .subject .faces { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.5rem; }
+    .face { width: 120px; background: #222; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
+    .face img { width: 100%; display: block; background: #000; }
+    .face .fmeta { padding: 0.3rem; font-size: 0.7rem; color: #bbb; }
+    .face.ref { border-color: #5a8f5a; }
     .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; margin-top: 1rem; }
     .shot { background: #1c1c1e; border: 1px solid #333; border-radius: 8px; overflow: hidden; }
     .shot img { width: 100%; display: block; background: #000; }
@@ -14,22 +27,27 @@
     .shot .tc { font-family: ui-monospace, monospace; color: #ccc; }
     .metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.15rem 0.5rem; margin-top: 0.4rem; font-size: 0.75rem; color: #aaa; }
     .metrics span { display: flex; justify-content: space-between; }
-    .controls { margin-top: 0.5rem; font-size: 0.8rem; }
-    .corrections { display: flex; flex-direction: column; gap: 0.2rem; margin-bottom: 0.35rem; }
-    .corr-row { display: flex; align-items: center; gap: 0.4rem; }
-    .corr-row label { display: flex; align-items: center; gap: 0.3rem; }
+    .corrections { display: flex; flex-direction: column; gap: 0.2rem; margin: 0.35rem 0; }
+    .corr-row { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; }
     .corr-row.off { opacity: 0.5; }
-    .controls button { background: #2c2c2e; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 0.15rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
-    .controls button:hover { background: #3a3a3c; }
-    .corr-row button { padding: 0 0.35rem; }
+    .track { margin-top: 0.3rem; font-size: 0.72rem; color: #9f9; }
+    .notes { display: flex; flex-direction: column; gap: 0.4rem; }
+    .note { background: #1c1c1e; border: 1px solid #333; border-radius: 6px; padding: 0.5rem 0.7rem; font-size: 0.82rem; }
+    .note .author { color: #9cf; font-size: 0.72rem; }
   </style>
 </head>
 <body>
   <h1>ColorAI Review</h1>
   <p class="muted">{{ projects }} · {{ shots|length }} shots</p>
-  {% if not shots %}
-    <p class="muted">No shots yet — run <code>colorai analyze &lt;master&gt;</code> first.</p>
-  {% endif %}
+
+  <h2>Subjects</h2>
+  <div id="subjects" class="subjects"><span class="muted">Loading…</span></div>
+  <div style="margin-top:0.5rem">
+    <button id="new-subject">+ New subject</button>
+  </div>
+
+  <h2>Shots</h2>
+  {% if not shots %}<p class="muted">No shots yet — run <code>colorai analyze &lt;master&gt;</code> first.</p>{% endif %}
   <div class="shots">
   {% for s in shots %}
     <div class="shot" data-shot="{{ s.id }}">
@@ -38,6 +56,8 @@
         <div class="tc">{{ s.start_tc }} → {{ s.end_tc }}</div>
         <div class="muted">shot {{ s.index }} · {{ s.frame_count }} frames</div>
         <div class="controls" data-controls></div>
+        <button class="track-btn" data-shot="{{ s.id }}">Track skin</button>
+        <div class="track" data-track></div>
         <div class="metrics">
           <span>Y <b>{{ s.luma_mean }}</b></span>
           <span>σ <b>{{ s.luma_std }}</b></span>
@@ -51,63 +71,185 @@
   {% endfor %}
   </div>
 
+  <h2>Notes</h2>
+  <div class="muted" style="margin-bottom:0.4rem">
+    <input id="note-text" placeholder="Add a note…" style="width:60%">
+    <button id="add-note">Add</button>
+  </div>
+  <div id="notes" class="notes"><span class="muted">Loading…</span></div>
+
   <script>
-    function bump(card) {
-      const img = card.querySelector('[data-preview]');
-      img.src = img.src.split('?')[0] + '?t=' + Date.now();
+    const ASSET_ID = {{ asset_id if asset_id is not none else "null" }};
+
+    // --- subjects -----------------------------------------------------------
+    async function refreshSubjects() {
+      const box = document.getElementById('subjects');
+      if (ASSET_ID === null) { box.innerHTML = '<span class="muted">No asset</span>'; return; }
+      const res = await fetch(`/api/assets/${ASSET_ID}/subjects`);
+      const subjects = await res.json();
+      if (!subjects.length) { box.innerHTML = '<span class="muted">No subjects yet</span>'; return; }
+
+      box.innerHTML = '';
+      for (const s of subjects) {
+        const el = document.createElement('div');
+        el.className = 'subject';
+
+        const head = document.createElement('div');
+        head.className = 'head';
+        const name = document.createElement('span');
+        name.className = 'name';
+        name.textContent = s.name + (s.reference_shot_id ? ' ★' : '');
+        head.appendChild(name);
+
+        const rename = document.createElement('button');
+        rename.textContent = 'Rename';
+        rename.onclick = async () => {
+          const n = prompt('Subject name', s.name);
+          if (n) { await fetch(`/api/subjects/${s.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n}) }); refreshSubjects(); }
+        };
+        head.appendChild(rename);
+
+        const mergeSel = document.createElement('select');
+        for (const other of subjects) if (other.id !== s.id) {
+          const o = document.createElement('option'); o.value = other.id; o.textContent = other.name; mergeSel.appendChild(o);
+        }
+        head.appendChild(mergeSel);
+        const merge = document.createElement('button');
+        merge.textContent = 'Merge into';
+        merge.onclick = async () => {
+          await fetch('/api/subjects/merge', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({keep_id: mergeSel.value, drop_id: s.id}) });
+          refreshSubjects();
+        };
+        head.appendChild(merge);
+
+        const del = document.createElement('button');
+        del.textContent = 'Delete';
+        del.onclick = async () => {
+          await fetch(`/api/subjects/${s.id}`, { method:'DELETE' });
+          refreshSubjects();
+        };
+        head.appendChild(del);
+
+        el.appendChild(head);
+
+        const faces = document.createElement('div');
+        faces.className = 'faces';
+        for (const f of s.faces) {
+          const card = document.createElement('div');
+          card.className = 'face' + (f.shot_id === s.reference_shot_id ? ' ref' : '');
+          const img = document.createElement('img');
+          img.src = `/shots/${f.shot_id}/preview.png`;
+          card.appendChild(img);
+          const meta = document.createElement('div');
+          meta.className = 'fmeta';
+          meta.textContent = `${f.timecode} · face ${f.face_index} · ${f.mean_bgr.map(v => Math.round(v*255)).join(',')}`;
+          card.appendChild(meta);
+
+          const ref = document.createElement('button');
+          ref.textContent = 'Set ref';
+          ref.onclick = async () => {
+            await fetch(`/api/subjects/${s.id}/reference`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({shot_id: f.shot_id}) });
+            refreshSubjects();
+          };
+          card.appendChild(ref);
+
+          const move = document.createElement('select');
+          const un = document.createElement('option'); un.value = ''; un.textContent = 'unassign'; move.appendChild(un);
+          for (const other of subjects) if (other.id !== s.id) {
+            const o = document.createElement('option'); o.value = other.id; o.textContent = other.name; move.appendChild(o);
+          }
+          move.onchange = async () => {
+            await fetch(`/api/skin_metrics/${f.skin_metric_id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({subject_id: move.value ? Number(move.value) : null}) });
+            refreshSubjects();
+          };
+          card.appendChild(move);
+
+          faces.appendChild(card);
+        }
+        el.appendChild(faces);
+        box.appendChild(el);
+      }
     }
 
+    document.getElementById('new-subject').onclick = async () => {
+      const n = prompt('New subject name');
+      if (n && ASSET_ID !== null) {
+        await fetch(`/api/assets/${ASSET_ID}/subjects`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n}) });
+        refreshSubjects();
+      }
+    };
+
+    // --- notes --------------------------------------------------------------
+    async function refreshNotes() {
+      const box = document.getElementById('notes');
+      if (ASSET_ID === null) { box.innerHTML = '<span class="muted">No asset</span>'; return; }
+      const res = await fetch(`/api/assets/${ASSET_ID}/notes`);
+      const notes = await res.json();
+      box.innerHTML = notes.length ? '' : '<span class="muted">No notes yet</span>';
+      for (const n of notes) {
+        const el = document.createElement('div');
+        el.className = 'note';
+        const a = document.createElement('div'); a.className = 'author'; a.textContent = n.author;
+        el.appendChild(a);
+        el.appendChild(document.createTextNode(n.text));
+        box.appendChild(el);
+      }
+    }
+
+    document.getElementById('add-note').onclick = async () => {
+      const text = document.getElementById('note-text').value;
+      if (text && ASSET_ID !== null) {
+        await fetch(`/api/assets/${ASSET_ID}/notes`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text, author:'human'}) });
+        document.getElementById('note-text').value = '';
+        refreshNotes();
+      }
+    };
+
+    // --- tracking -----------------------------------------------------------
+    document.querySelectorAll('.track-btn').forEach(btn => {
+      btn.onclick = async () => {
+        const id = btn.dataset.shot;
+        const out = document.querySelector(`.shot[data-shot="${id}"] [data-track]`);
+        out.textContent = 'tracking…';
+        const res = await fetch(`/api/shots/${id}/track`);
+        const r = await res.json();
+        out.textContent = r.error || `skin ${r.median_bgr ? r.median_bgr.map(v=>Math.round(v)).join(',') : '—'} · stability ${r.stability ?? '—'} · ${r.tracked_frames} frames`;
+      };
+    });
+
+    // --- corrections (existing) ---------------------------------------------
+    function bump(card) { const img = card.querySelector('[data-preview]'); img.src = img.src.split('?')[0] + '?t=' + Date.now(); }
     async function refreshShot(shotId) {
       const res = await fetch(`/api/shots/${shotId}`);
       const shot = await res.json();
       const card = document.querySelector(`.shot[data-shot="${shotId}"]`);
       const controls = card.querySelector('[data-controls]');
       controls.innerHTML = '';
-
-      const list = document.createElement('div');
-      list.className = 'corrections';
+      const list = document.createElement('div'); list.className = 'corrections';
       for (const c of shot.corrections) {
-        const row = document.createElement('div');
-        row.className = 'corr-row' + (c.enabled ? '' : ' off');
-
+        const row = document.createElement('div'); row.className = 'corr-row' + (c.enabled ? '' : ' off');
         const label = document.createElement('label');
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = c.enabled;
-        checkbox.onchange = async () => {
-          await fetch(`/api/corrections/${c.id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: checkbox.checked }),
-          });
+        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = c.enabled;
+        cb.onchange = async () => {
+          await fetch(`/api/corrections/${c.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled: cb.checked}) });
           bump(card);
         };
-        label.appendChild(checkbox);
-        label.appendChild(document.createTextNode(c.kind));
+        label.appendChild(cb); label.appendChild(document.createTextNode(c.kind));
         row.appendChild(label);
-
-        const del = document.createElement('button');
-        del.textContent = '×';
-        del.onclick = async () => {
-          await fetch(`/api/corrections/${c.id}`, { method: 'DELETE' });
-          refreshShot(shotId);
-        };
+        const del = document.createElement('button'); del.textContent = '×';
+        del.onclick = async () => { await fetch(`/api/corrections/${c.id}`, { method:'DELETE' }); refreshShot(shotId); };
         row.appendChild(del);
-
         list.appendChild(row);
       }
       controls.appendChild(list);
-
-      const propose = document.createElement('button');
-      propose.textContent = 'Propose';
-      propose.onclick = async () => {
-        await fetch(`/api/shots/${shotId}/propose`, { method: 'POST' });
-        refreshShot(shotId);
-      };
+      const propose = document.createElement('button'); propose.textContent = 'Propose';
+      propose.onclick = async () => { await fetch(`/api/shots/${shotId}/propose`, { method:'POST' }); refreshShot(shotId); };
       controls.appendChild(propose);
     }
 
     document.querySelectorAll('.shot').forEach(card => refreshShot(card.dataset.shot));
+    refreshSubjects();
+    refreshNotes();
   </script>
 </body>
 </html>
