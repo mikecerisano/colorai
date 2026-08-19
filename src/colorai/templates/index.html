@@ -31,6 +31,8 @@
     .badge.proposed { color:var(--amber); border-color:#6b5626; }
     .badge.enabled { color:var(--green); border-color:#2c6b3f; }
     .filmstrip { display:flex; gap:0.6rem; overflow-x:auto; padding:0.25rem 0 0.5rem; }
+    .filmstrip.drop-target { min-height:150px; border:1px dashed transparent; border-radius:8px; }
+    .filmstrip.drop-target.drag-over { border-color:var(--accent); background:#152033; }
     .shot-thumb { min-width:200px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; overflow:hidden; cursor:pointer; }
     .shot-thumb img { width:100%; display:block; background:#000; aspect-ratio:16/9; object-fit:cover; }
     .shot-thumb.ref-shot { outline:2px solid var(--green); }
@@ -176,9 +178,9 @@
 
           {% set direct = ws.shots | selectattr('group_id','equalto',setup.id) | list %}
           <div class="muted" style="margin-top:0.6rem">{{ direct|length }} shots{% if setup.camera %} · camera {{ setup.camera }}{% endif %}</div>
-          <div class="filmstrip">
+          <div class="filmstrip drop-target" data-drop-group="{{ setup.id }}" ondragover="allowShotDrop(event)" ondragleave="leaveShotDrop(event)" ondrop="dropShotInGroup(event, {{ setup.id }})">
             {% for s in direct %}
-            <div class="shot-thumb {% if setup.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}">
+            <div class="shot-thumb {% if setup.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}" data-shot-id="{{ s.id }}" draggable="true" ondragstart="startShotDrag(event, {{ s.id }})">
               <img src="/shots/{{ s.id }}/preview.png" data-preview src-orig="/shots/{{ s.id }}/original.png" alt="shot {{ s.index }}">
               <div class="meta">
                 shot {{ s.index }} · {{ s.start_tc }}
@@ -191,9 +193,9 @@
 
           {% for v in ws.setups if v.parent_id == setup.id %}
           <div class="variant-head">variant: {{ v.name }}{% if v.camera %} · camera {{ v.camera }}{% endif %}</div>
-          <div class="filmstrip">
+          <div class="filmstrip drop-target" data-drop-group="{{ v.id }}" ondragover="allowShotDrop(event)" ondragleave="leaveShotDrop(event)" ondrop="dropShotInGroup(event, {{ v.id }})">
             {% for s in ws.shots | selectattr('group_id','equalto',v.id) | list %}
-            <div class="shot-thumb {% if v.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}">
+            <div class="shot-thumb {% if v.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}" data-shot-id="{{ s.id }}" draggable="true" ondragstart="startShotDrag(event, {{ s.id }})">
               <img src="/shots/{{ s.id }}/preview.png" data-preview src-orig="/shots/{{ s.id }}/original.png" alt="shot {{ s.index }}">
               <div class="meta">shot {{ s.index }} · {{ s.start_tc }}{% if s.corrections %} <span class="badge needs-review">proposed</span>{% endif %}</div>
             </div>
@@ -567,6 +569,24 @@
     // -- needs organization -------------------------------------------------
     async function assignShotToGroup(shotId, groupId) {
       await request(`/api/shots/${shotId}/group`, 'PUT', {group_id: groupId});
+    }
+    function startShotDrag(event, shotId) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', String(shotId));
+    }
+    function allowShotDrop(event) {
+      event.preventDefault();
+      event.currentTarget.classList.add('drag-over');
+    }
+    function leaveShotDrop(event) {
+      event.currentTarget.classList.remove('drag-over');
+    }
+    async function dropShotInGroup(event, groupId) {
+      event.preventDefault();
+      event.currentTarget.classList.remove('drag-over');
+      const shotId = Number(event.dataTransfer.getData('text/plain'));
+      if (!shotId || !groupId) return;
+      await organize('assign', {group_id: groupId, shot_ids: [shotId]});
     }
     function selectedShotIds() {
       return [...document.querySelectorAll('.shot-select:checked')].map(c => Number(c.value));

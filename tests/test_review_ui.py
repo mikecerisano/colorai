@@ -240,6 +240,26 @@ def test_parent_setup_all_members_include_variant_shots(tmp_path):
     assert [m["id"] for m in variant_ws["all_members"]] == [shots[1].id]
 
 
+def test_setup_filmstrips_support_dragging_shots_between_groups(tmp_path):
+    client, asset, shots, alice, bob = _client(tmp_path)
+    setup = client.post(
+        f"/api/assets/{asset.id}/groups", json={"name": "interview", "kind": "setup"}
+    ).json()
+    variant = client.post(
+        f"/api/assets/{asset.id}/groups",
+        json={"name": "night", "kind": "variant", "parent_id": setup["id"]},
+    ).json()
+    client.put(f"/api/shots/{shots[0].id}/group", json={"group_id": setup["id"]})
+    client.put(f"/api/shots/{shots[1].id}/group", json={"group_id": variant["id"]})
+
+    body = client.get("/").text
+    assert f'data-drop-group="{setup["id"]}"' in body
+    assert f'data-drop-group="{variant["id"]}"' in body
+    assert f'data-shot-id="{shots[0].id}"' in body
+    assert 'draggable="true"' in body
+    assert "function dropShotInGroup" in body
+
+
 def test_active_proposal_skips_rejected_and_uses_newest_suggested(tmp_path):
     client, asset, shots, alice, bob = _client(tmp_path)
     setup = client.post(
