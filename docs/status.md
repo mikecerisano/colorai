@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 354 tests passing.
+Current progress. 361 tests passing.
 
 ## Done
 
@@ -113,6 +113,15 @@ Current progress. 354 tests passing.
   differences are treated as expected — ``cross_variant_skin_consistency``
   checks only face/skin consistency and proposes a skin-only ``rgb_balance``
   when a variant genuinely drifts.
+- **Lower-third name suggestions** — `nametag.py` detects the lower-third
+  region of a shot's still, OCRs it (Tesseract CLI, no Python binding), splits
+  the first line as a candidate name (title-cased) and the rest as
+  role/affiliation, and persists `NameSuggestion` rows with raw text,
+  confidence, source timecode, and a crop path. Association is conservative:
+  only a *single*-subject shot is auto-associated; multi-person shots stay
+  unassigned. `Subject.name_confirmed` tracks human-confirmed names, so
+  Accept/Edit never overwrite them. Exposed via pipeline, MCP, and the review
+  UI (subject cards show the suggestion with Accept/Edit/Ignore).
 - **Review UI (setup-first)** — the review screen is organized around
   *interview setups* (sidebar cards) rather than a flat subject/face dump: each
   setup shows its subject(s), camera label, lighting variants, member-shot
@@ -159,12 +168,12 @@ Current progress. 354 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 354 tests across timecode, project model, migrations (incl. legacy
+- 361 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
   auto-assignment), correction, LUT/curve, render, resumability, editorial,
   references, matching (incl. variants), analysis, face (incl. bbox), skin,
-  skin analysis, tracking, anomaly, QC, generative, restoration, MCP, UI,
-  and CLI.
+  skin analysis, nametag (lower-thirds), tracking, anomaly, QC, generative,
+  restoration, MCP, UI, and CLI.
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45
   shots, three skin subjects separated, and per-subject skin drift flagged
   with proposed corrections.

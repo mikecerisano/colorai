@@ -36,6 +36,12 @@ display-referred perceptual op.
   match proposals appear. Proposals are deterministic, disabled, and carry
   their reference + group context. Global median matching stays an explicit
   diagnostic, not a default.
+- **Lower-third name suggestions** — persistent lower-third text is detected
+  and OCR'd (local Tesseract CLI, optional), split into a candidate name vs
+  role/affiliation, and associated with the visible subject only for
+  single-person shots (multi-person shots stay unassigned). Suggestions show
+  source timecode + crop with Accept / Edit / Ignore, are **evidence, not
+  identity truth**, and never overwrite a human-confirmed name.
 - **Temporal QC** — flicker, highlight/shadow measurements, and blank /
   duplicate damaged-frame signatures, alongside blur-pulse detection — all
   reported as *evidence, not defects* for comparing similar shots.
@@ -118,7 +124,7 @@ record reasoning.
 .venv/bin/python -m pytest
 ```
 
-354 tests, including exhaustive SMPTE drop-frame round-trips, real
+361 tests, including exhaustive SMPTE drop-frame round-trips, real
 ffmpeg-encoded fixtures, and end-to-end pipeline + MCP checks. Tests that need
 `ffmpeg` skip automatically when it's absent.
 

@@ -33,6 +33,7 @@ from colorai.project.models import (
     Correction,
     FrameMetrics,
     MediaAsset,
+    NameSuggestion,
     Note,
     Project,
     ReferenceProposal,
@@ -129,12 +130,17 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                 elif proposal_state.get(p.group_id) != "approved" and p.state == "suggested":
                     proposal_state[p.group_id] = "suggested"
 
+        suggestion_rows = (
+            session.query(NameSuggestion).filter_by(asset_id=asset_id).order_by(NameSuggestion.id).all()
+        )
+
         return {
             "asset_id": asset_id,
             "subjects": [
                 {
                     "id": s.id,
                     "name": s.name,
+                    "name_confirmed": s.name_confirmed,
                     "reference_shot_id": s.reference_shot_id,
                     "faces": [face_brief(m) for m in face_rows if m.subject_id == s.id],
                 }
@@ -179,6 +185,20 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                     "state": p.state,
                 }
                 for p in proposals
+            ],
+            "name_suggestions": [
+                {
+                    "id": s.id,
+                    "subject_id": s.subject_id,
+                    "shot_id": s.shot_id,
+                    "candidate_name": s.candidate_name,
+                    "raw_text": s.raw_text,
+                    "role_text": s.role_text,
+                    "confidence": round(s.confidence, 2),
+                    "timecode": s.timecode,
+                    "state": s.state,
+                }
+                for s in suggestion_rows
             ],
         }
 
@@ -273,6 +293,14 @@ class ReferenceProposalIn(BaseModel):
     subject_id: int | None = None
     group_id: int | None = None
     author: str = "human"
+
+
+class NameSuggestionAccept(BaseModel):
+    name: str | None = None
+
+
+class NameSuggestionAssign(BaseModel):
+    subject_id: int
 
 
 class NoteIn(BaseModel):
@@ -529,6 +557,55 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
         if proposal is None:
             raise HTTPException(status_code=404, detail="proposal not found")
         return {"id": proposal.id, "state": proposal.state}
+
+    # -- lower-third name suggestions ---------------------------------------
+
+    @app.get("/api/name-suggestions/{suggestion_id}/crop.png")
+    def name_suggestion_crop(suggestion_id: int):
+        from colorai.nametag import list_suggestions
+
+        with store.session() as session:
+            suggestion = session.get(NameSuggestion, suggestion_id)
+            if suggestion is None or not suggestion.crop_path:
+                raise HTTPException(status_code=404, detail="suggestion crop not found")
+            crop_path = suggestion.crop_path
+        image = cv2.imread(crop_path, cv2.IMREAD_COLOR)
+        if image is None:
+            raise HTTPException(status_code=500, detail="cannot read crop")
+        ok, encoded = cv2.imencode(".png", image)
+        if not ok:
+            raise HTTPException(status_code=500, detail="failed to encode crop")
+        return Response(content=encoded.tobytes(), media_type="image/png")
+
+    @app.post("/api/name-suggestions/{suggestion_id}/accept")
+    def accept_name_suggestion_endpoint(suggestion_id: int, payload: NameSuggestionAccept):
+        from colorai.nametag import accept_suggestion as _accept
+
+        suggestion = _accept(store, suggestion_id, name=payload.name)
+        if suggestion is None:
+            raise HTTPException(status_code=404, detail="suggestion not found")
+        return {"id": suggestion.id, "state": suggestion.state, "subject_id": suggestion.subject_id}
+
+    @app.post("/api/name-suggestions/{suggestion_id}/ignore")
+    def ignore_name_suggestion_endpoint(suggestion_id: int):
+        from colorai.nametag import ignore_suggestion as _ignore
+
+        suggestion = _ignore(store, suggestion_id)
+        if suggestion is None:
+            raise HTTPException(status_code=404, detail="suggestion not found")
+        return {"id": suggestion.id, "state": suggestion.state}
+
+    @app.post("/api/name-suggestions/{suggestion_id}/assign")
+    def assign_name_suggestion_endpoint(suggestion_id: int, payload: NameSuggestionAssign):
+        from colorai.nametag import assign_suggestion as _assign
+
+        try:
+            suggestion = _assign(store, suggestion_id, payload.subject_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if suggestion is None:
+            raise HTTPException(status_code=404, detail="suggestion or subject not found")
+        return {"id": suggestion.id, "subject_id": suggestion.subject_id}
 
     @app.post("/api/shots/{shot_id}/corrections", status_code=201)
     def add_correction(shot_id: int, payload: CorrectionIn):

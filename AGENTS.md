@@ -20,6 +20,9 @@ python3.12 -m venv .venv
 `ffmpeg` and `ffprobe` must be on `PATH` (Homebrew: `brew install ffmpeg`).
 Tests that need them skip automatically when they are absent.
 
+Lower-third name suggestions use the `tesseract` CLI (`brew install tesseract`)
+when present; the feature is skipped gracefully when it is absent.
+
 ## Run tests
 
 ```bash
@@ -54,6 +57,7 @@ src/colorai/
   references.py      human-approved reference proposals
   matching.py        group-aware subject/setup matching
   face.py            YuNet detection + SFace identity + skin sampling
+  nametag.py         lower-third OCR -> name suggestions (Tesseract CLI)
   skin.py            color-only skin heuristic (experiment)
   restoration.py     deterministic recovery + generative boundary
   generative.py      RIFE + LaMa ONNX loader + status surface

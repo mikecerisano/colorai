@@ -222,6 +222,7 @@ def rename_subject(store: ProjectStore, subject_id: int, name: str) -> Subject |
         if subject is None:
             return None
         subject.name = name
+        subject.name_confirmed = True  # a human-set name is authoritative
         session.flush()
         session.refresh(subject)
     return subject

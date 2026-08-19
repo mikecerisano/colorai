@@ -260,6 +260,13 @@ def analyze_master(
     if assigned == 0:
         auto_assign_subjects(store, asset.id)
 
+    # Lower-third name suggestions (OCR, optional): evidence for subject names.
+    from colorai.nametag import extract_and_store_suggestions, ocr_available
+
+    if ocr_available():
+        crops_dir = Path(stills_dir).parent / "crops" / f"asset_{asset.id:04d}"
+        extract_and_store_suggestions(store, asset, shots, frames, crops_dir)
+
     with store.session() as session:
         session.query(MediaAsset).filter(MediaAsset.id == asset.id).update(
             {"status": "analyzed", "analyze_params": params}

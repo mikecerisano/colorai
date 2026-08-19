@@ -184,6 +184,7 @@
         <div class="subject" data-subject="{{ s.id }}">
           <div class="head">
             <span class="name">{{ s.name }}</span>
+            {% if s.name_confirmed %}<span class="badge approved">confirmed</span>{% else %}<span class="badge">auto</span>{% endif %}
             {% if s.reference_shot_id %}<span class="badge approved">ref ★</span>{% endif %}
             <input type="text" id="rename-{{ s.id }}" value="{{ s.name }}" style="width:8rem">
             <button onclick="renameSubject({{ s.id }})">Rename</button>
@@ -193,6 +194,31 @@
             <button onclick="mergeSubject({{ s.id }})">Merge into</button>
             <button onclick="deleteSubject({{ s.id }})">Delete</button>
           </div>
+
+          {% set name_sugs = ws.name_suggestions | selectattr('subject_id','equalto',s.id) | list %}
+          {% for n in name_sugs %}
+          <div class="ref-panel" style="margin:0.4rem 0">
+            <div class="row" style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
+              <span class="badge suggested">suggested name</span>
+              <b>{{ n.candidate_name }}</b>
+              {% if n.role_text %}<span class="muted">{{ n.role_text }}</span>{% endif %}
+              <span class="muted">conf {{ n.confidence }}</span>
+              <span class="muted">{{ n.timecode }}</span>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:0.6rem;margin-top:0.4rem">
+              <img src="/api/name-suggestions/{{ n.id }}/crop.png" style="height:56px;border:1px solid var(--line);border-radius:4px">
+              <div class="muted" style="flex:1">{{ n.raw_text }}</div>
+            </div>
+            {% if n.state == "suggested" %}
+            <div style="margin-top:0.4rem">
+              <button onclick="acceptName({{ n.id }})">Accept</button>
+              <button onclick="editName({{ n.id }}, {{ s.id }})">Edit</button>
+              <button onclick="ignoreName({{ n.id }})">Ignore</button>
+            </div>
+            {% else %}<span class="badge">{{ n.state }}</span>{% endif %}
+          </div>
+          {% endfor %}
+
           <div class="faces">
             {% for f in s.faces %}
             <div class="face {% if f.shot_id == s.reference_shot_id %}ref{% endif %}">
@@ -240,6 +266,27 @@
             {% for g in ws.setups %}<option value="{{ g.id }}">{{ g.name }}{% if g.camera %} ({{ g.camera }}){% endif %}</option>{% endfor %}
           </select>
           <button onclick="addShotToSetup({{ s.id }})">Assign</button>
+        </div>
+        {% endfor %}
+
+        <h2>Name suggestions (unassigned)</h2>
+        {% set unassigned_sugs = ws.name_suggestions | selectattr('subject_id','none') | list %}
+        {% if not unassigned_sugs %}<p class="muted">None.</p>{% endif %}
+        {% for n in unassigned_sugs %}
+        <div class="inbox-item" style="align-items:flex-start">
+          <img src="/api/name-suggestions/{{ n.id }}/crop.png" style="width:56px;border:1px solid var(--line);border-radius:4px">
+          <div style="flex:1">
+            <div><b>{{ n.candidate_name }}</b> <span class="muted">{{ n.role_text or '' }} · shot {{ n.shot_id }} · {{ n.timecode }} · conf {{ n.confidence }}</span></div>
+            <div class="muted">{{ n.raw_text }}</div>
+            <div style="display:flex;gap:0.4rem;margin-top:0.3rem">
+              <select id="assign-name-{{ n.id }}">
+                <option value="">Assign to…</option>
+                {% for s in ws.subjects %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+              </select>
+              <button onclick="assignName({{ n.id }})">Assign</button>
+              {% if n.state == "suggested" %}<button onclick="ignoreName({{ n.id }})">Ignore</button>{% endif %}
+            </div>
+          </div>
         </div>
         {% endfor %}
       </section>
@@ -305,6 +352,17 @@
 
     async function approveRef(id) { await post(`/api/reference-proposals/${id}/approve`); }
     async function rejectRef(id) { await post(`/api/reference-proposals/${id}/reject`); }
+
+    async function acceptName(id) { await post(`/api/name-suggestions/${id}/accept`); }
+    async function ignoreName(id) { await post(`/api/name-suggestions/${id}/ignore`); }
+    async function editName(id) {
+      const n = prompt('Edit name');
+      if (n) await post(`/api/name-suggestions/${id}/accept`, {name:n});
+    }
+    async function assignName(id) {
+      const sid = document.getElementById('assign-name-'+id).value;
+      if (sid) await post(`/api/name-suggestions/${id}/assign`, {subject_id: Number(sid)});
+    }
 
     // Open the first setup by default.
     document.querySelectorAll('.setup-card').forEach((c,i) => { if (i===0) selectSetup(Number(c.dataset.setup)); });

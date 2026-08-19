@@ -953,6 +953,93 @@ def add_note(
 
 
 @mcp.tool()
+def ocr_status() -> dict:
+    """Report whether lower-third OCR (Tesseract) is available."""
+    from colorai.nametag import ocr_status as _status
+
+    return _status()
+
+
+@mcp.tool()
+def list_name_suggestions(project: str, asset_id: int) -> list[dict]:
+    """List lower-third name suggestions (evidence, not identity truth)."""
+    from colorai.nametag import list_suggestions as _list
+
+    return [
+        {
+            "id": s.id,
+            "subject_id": s.subject_id,
+            "shot_id": s.shot_id,
+            "candidate_name": s.candidate_name,
+            "raw_text": s.raw_text,
+            "role_text": s.role_text,
+            "confidence": s.confidence,
+            "timecode": s.timecode,
+            "crop_path": s.crop_path,
+            "state": s.state,
+        }
+        for s in _list(_open(project), asset_id)
+    ]
+
+
+@mcp.tool()
+def accept_name_suggestion(
+    project: str, suggestion_id: int, name: str | None = None
+) -> dict:
+    """Accept a name suggestion (optionally with a human-edited name).
+
+    Never overwrites a human-confirmed subject name.
+    """
+    from colorai.nametag import accept_suggestion as _accept
+
+    s = _accept(_open(project), suggestion_id, name=name)
+    return {"id": s.id, "state": s.state, "candidate_name": s.candidate_name} if s else {"error": "not found"}
+
+
+@mcp.tool()
+def ignore_name_suggestion(project: str, suggestion_id: int) -> dict:
+    from colorai.nametag import ignore_suggestion as _ignore
+
+    s = _ignore(_open(project), suggestion_id)
+    return {"id": s.id, "state": s.state} if s else {"error": "not found"}
+
+
+@mcp.tool()
+def assign_name_suggestion(project: str, suggestion_id: int, subject_id: int) -> dict:
+    """Attach an unassigned (multi-person) suggestion to a subject for review."""
+    from colorai.nametag import assign_suggestion as _assign
+
+    s = _assign(_open(project), suggestion_id, subject_id)
+    return {"id": s.id, "subject_id": s.subject_id} if s else {"error": "not found"}
+
+
+@mcp.tool()
+def generate_name_suggestions(project: str, asset_id: int) -> dict:
+    """Re-run lower-third OCR over an asset's shots and persist suggestions."""
+    from colorai.nametag import extract_and_store_suggestions, ocr_available
+    from colorai.project.models import MediaAsset, RepresentativeFrame, Shot
+
+    if not ocr_available():
+        return {"error": "tesseract not installed", "created": 0}
+    store = _open(project)
+    with store.session() as session:
+        asset = session.get(MediaAsset, asset_id)
+        if asset is None:
+            return {"error": "asset not found", "created": 0}
+        shots = session.query(Shot).filter_by(asset_id=asset_id).order_by(Shot.index).all()
+        frames = (
+            session.query(RepresentativeFrame)
+            .join(Shot, RepresentativeFrame.shot_id == Shot.id)
+            .filter(Shot.asset_id == asset_id)
+            .order_by(Shot.index)
+            .all()
+        )
+    crops_dir = Path(project).parent / "crops" / f"asset_{asset_id:04d}"
+    created = extract_and_store_suggestions(store, asset, shots, frames, crops_dir)
+    return {"created": len(created)}
+
+
+@mcp.tool()
 def analyze_master(
     project: str, master: str, project_name: str | None = None, resume: bool = True
 ) -> dict:

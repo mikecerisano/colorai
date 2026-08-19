@@ -275,6 +275,9 @@ class Subject(Base):
         ForeignKey("media_assets.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # True once a human (or an explicitly accepted suggestion) set the name;
+    # a lower-third suggestion never overwrites a confirmed name.
+    name_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     reference_shot_id: Mapped[int | None] = mapped_column(
         ForeignKey("shots.id", ondelete="SET NULL"), nullable=True
     )
@@ -389,6 +392,42 @@ class ReferenceProposal(Base):
     shot: Mapped[Shot] = relationship()
 
 
+class NameSuggestion(Base):
+    """A lower-third OCR name candidate for a subject.
+
+    Lower-thirds are **evidence, not identity truth**: a suggestion is
+    ``suggested`` until a human accepts or ignores it. Accepting never
+    overwrites a human-confirmed subject name, and multi-person shots are
+    associated conservatively (``subject_id`` stays ``NULL`` until a human
+    assigns it). Role/affiliation text is stored separately from the name.
+    """
+
+    __tablename__ = "name_suggestions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("media_assets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    subject_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    shot_id: Mapped[int] = mapped_column(
+        ForeignKey("shots.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    candidate_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    role_text: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    timecode: Mapped[str] = mapped_column(String(16), nullable=False)
+    crop_path: Mapped[str | None] = mapped_column(String(4096))
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="suggested")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    asset: Mapped[MediaAsset] = relationship()
+    subject: Mapped["Subject | None"] = relationship()
+    shot: Mapped[Shot] = relationship()
+
+
 # Silence unused-import lint for re-exported names.
 __all__ = [
     "Base",
@@ -403,5 +442,6 @@ __all__ = [
     "Subject",
     "Note",
     "ReferenceProposal",
+    "NameSuggestion",
     "utcnow",
 ]
