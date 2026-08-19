@@ -297,8 +297,25 @@ def test_setup_workspace_shows_total_members_and_participants(tmp_path):
 
     body = client.get("/").text
     assert "Participants / references" in body
-    assert "Set reference" in body
+    assert "Click a thumbnail to choose a reference frame" in body
+    assert "Set selected frame as reference" in body
+    assert "Single-shot QC" in body
+    assert 'class="badge single-shot-qc"' in body
     assert "2 shots · 1 variant" in body
+
+
+def test_reference_selection_uses_participants_visible_in_clicked_thumbnail(tmp_path):
+    client, asset, shots, alice, bob = _client(tmp_path)
+    setup = client.post(
+        f"/api/assets/{asset.id}/groups", json={"name": "shared interview", "kind": "setup"}
+    ).json()
+    client.put(f"/api/shots/{shots[0].id}/group", json={"group_id": setup["id"]})
+
+    body = client.get("/").text
+    assert f'data-reference-scope="{setup["id"]}"' in body
+    assert f'data-subject-ids="{alice.id},{bob.id}"' in body
+    assert "selectReferenceShot" in body
+    assert "setSelectedParticipantReference" in body
 
 
 def test_active_proposal_skips_rejected_and_uses_newest_suggested(tmp_path):

@@ -37,6 +37,7 @@
     .shot-thumb { min-width:200px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; overflow:hidden; cursor:pointer; }
     .shot-thumb img { width:100%; display:block; background:#000; aspect-ratio:16/9; object-fit:cover; }
     .shot-thumb.ref-shot { outline:2px solid var(--green); }
+    .shot-thumb.reference-selected { outline:2px solid var(--accent); }
     .shot-thumb .meta { padding:0.4rem 0.55rem; font-size:0.72rem; color:var(--muted); }
     .ref-panel { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0.75rem; margin-top:0.75rem; }
     .ref-large { display:flex; gap:1rem; align-items:flex-start; }
@@ -162,14 +163,13 @@
 
           <h2>Participants / references</h2>
           {% if not setup.participants %}<p class="muted">No identified participants in these shots.</p>{% endif %}
+          {% if setup.participants %}<p class="muted">Click a thumbnail to choose a reference frame. Only people visible in that frame can use it.</p>{% endif %}
           {% for person in setup.participants %}
-          <div class="row" style="margin:0.35rem 0">
+          <div class="row participant-reference-choice" data-reference-scope="{{ setup.id }}" data-subject-id="{{ person.id }}" style="margin:0.35rem 0">
             <span class="badge">{{ person.name }}</span>
             <span class="muted">{{ person.face_count }} face samples</span>
-            <select id="participant-reference-{{ setup.id }}-{{ person.id }}">
-              {% for s in setup.all_members %}<option value="{{ s.id }}">shot {{ s.index }} · {{ s.start_tc }}</option>{% endfor %}
-            </select>
-            <button type="button" onclick="setParticipantReference({{ setup.id }}, {{ person.id }}, 'participant-reference-{{ setup.id }}-{{ person.id }}')">Set reference</button>
+            {% if person.single_shot %}<span class="badge single-shot-qc">Single-shot QC</span>{% endif %}
+            <button type="button" class="participant-reference-action hidden" onclick="setSelectedParticipantReference({{ setup.id }}, {{ person.id }})">Set selected frame as reference</button>
           </div>
           {% endfor %}
 
@@ -212,7 +212,7 @@
           <div class="muted" style="margin-top:0.6rem">{{ direct|length }} shots{% if setup.camera %} · camera {{ setup.camera }}{% endif %}</div>
           <div class="filmstrip drop-target" data-drop-group="{{ setup.id }}" ondragover="allowShotDrop(event)" ondragleave="leaveShotDrop(event)" ondrop="dropShotInGroup(event, {{ setup.id }})">
             {% for s in direct %}
-            <div class="shot-thumb {% if setup.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}" data-shot-id="{{ s.id }}" draggable="true" ondragstart="startShotDrag(event, {{ s.id }})">
+            <div class="shot-thumb {% if setup.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}" data-shot-id="{{ s.id }}" data-reference-scope="{{ setup.id }}" data-subject-ids="{{ s.subject_ids|join(',') }}" draggable="true" ondragstart="startShotDrag(event, {{ s.id }})" onclick="selectReferenceShot({{ setup.id }}, {{ s.id }}, '{{ s.subject_ids|join(',') }}')">
               <img src="/shots/{{ s.id }}/preview.png" data-preview src-orig="/shots/{{ s.id }}/original.png" alt="shot {{ s.index }}">
               <div class="meta">
                 shot {{ s.index }} · {{ s.start_tc }}
@@ -227,7 +227,7 @@
           <div class="variant-head">variant: {{ v.name }}{% if v.camera %} · camera {{ v.camera }}{% endif %}</div>
           <div class="filmstrip drop-target" data-drop-group="{{ v.id }}" ondragover="allowShotDrop(event)" ondragleave="leaveShotDrop(event)" ondrop="dropShotInGroup(event, {{ v.id }})">
             {% for s in ws.shots | selectattr('group_id','equalto',v.id) | list %}
-            <div class="shot-thumb {% if v.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}" data-shot-id="{{ s.id }}" draggable="true" ondragstart="startShotDrag(event, {{ s.id }})">
+            <div class="shot-thumb {% if v.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}" data-shot-id="{{ s.id }}" data-reference-scope="{{ v.id }}" data-subject-ids="{{ s.subject_ids|join(',') }}" draggable="true" ondragstart="startShotDrag(event, {{ s.id }})" onclick="selectReferenceShot({{ v.id }}, {{ s.id }}, '{{ s.subject_ids|join(',') }}')">
               <img src="/shots/{{ s.id }}/preview.png" data-preview src-orig="/shots/{{ s.id }}/original.png" alt="shot {{ s.index }}">
               <div class="meta">shot {{ s.index }} · {{ s.start_tc }}{% if s.corrections %} <span class="badge needs-review">proposed</span>{% endif %}</div>
             </div>
@@ -602,8 +602,22 @@
     }
     async function approveRef(id) { await request(`/api/reference-proposals/${id}/approve`, 'POST'); reloadPreservingView(); }
     async function rejectRef(id) { await request(`/api/reference-proposals/${id}/reject`, 'POST'); reloadPreservingView(); }
-    async function setParticipantReference(groupId, subjectId, selectId) {
-      const shotId = Number(document.getElementById(selectId).value);
+    const selectedReferenceShots = new Map();
+    function selectReferenceShot(groupId, shotId, subjectIds) {
+      const visibleSubjectIds = new Set(String(subjectIds).split(',').map(Number).filter(Boolean));
+      selectedReferenceShots.set(groupId, shotId);
+      document.querySelectorAll(`[data-reference-scope="${groupId}"]`).forEach(el => {
+        if (el.classList.contains('shot-thumb')) {
+          el.classList.toggle('reference-selected', Number(el.dataset.shotId) === shotId);
+        } else if (el.classList.contains('participant-reference-choice')) {
+          el.querySelector('.participant-reference-action')?.classList.toggle(
+            'hidden', !visibleSubjectIds.has(Number(el.dataset.subjectId))
+          );
+        }
+      });
+    }
+    async function setSelectedParticipantReference(groupId, subjectId) {
+      const shotId = selectedReferenceShots.get(groupId);
       if (!shotId || ASSET_ID === null) return;
       const proposal = await request(`/api/assets/${ASSET_ID}/reference-proposals`, 'POST', {
         shot_id: shotId, group_id: groupId, subject_id: subjectId,

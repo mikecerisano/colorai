@@ -126,6 +126,9 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                 "excused": s.excused,
                 "luma_mean": m.luma_mean if m else None,
                 "saturation_mean": m.saturation_mean if m else None,
+                "subject_ids": sorted(
+                    {face.subject_id for face in faces_by_shot.get(s.id, []) if face.subject_id is not None}
+                ),
                 "corrections": corrections_by_shot.get(s.id, []),
             }
 
@@ -161,16 +164,23 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
         }
         participant_rows_by_group: dict[int, list[dict]] = {}
         subject_by_id = {s.id: s for s in subjects}
+        group_id_by_shot = {shot.id: shot.group_id for shot in shots}
         for group in groups:
             face_counts: dict[int, int] = {}
+            shot_ids_by_subject: dict[int, set[int]] = {}
             member_ids = set(member_group_ids[group.id])
             for face in face_rows:
-                if face.subject_id is not None and any(
-                    shot.id == face.shot_id and shot.group_id in member_ids for shot in shots
-                ):
+                if face.subject_id is not None and group_id_by_shot.get(face.shot_id) in member_ids:
                     face_counts[face.subject_id] = face_counts.get(face.subject_id, 0) + 1
+                    shot_ids_by_subject.setdefault(face.subject_id, set()).add(face.shot_id)
             participant_rows_by_group[group.id] = [
-                {"id": subject_id, "name": subject_by_id[subject_id].name, "face_count": count}
+                {
+                    "id": subject_id,
+                    "name": subject_by_id[subject_id].name,
+                    "face_count": count,
+                    "shot_count": len(shot_ids_by_subject[subject_id]),
+                    "single_shot": len(shot_ids_by_subject[subject_id]) == 1,
+                }
                 for subject_id, count in sorted(face_counts.items())
             ]
 
