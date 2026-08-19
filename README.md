@@ -29,10 +29,13 @@ display-referred perceptual op.
   databases open safely and migrate in place.
 - **Interview/setup-aware matching** — the matching unit is *subject × setup
   family × camera angle* (labels assigned by a human or vision agent, never
-  inferred from pixels). An agent proposes reference shots with reasons and
-  confidence; a human must approve before group-scoped match proposals appear.
-  Proposals are deterministic, disabled, and carry their reference + group
-  context. Global median matching stays an explicit diagnostic, not a default.
+  inferred from pixels). A setup family can hold **lighting variants** (each
+  with its own approved reference) so natural window-light changes are matched
+  within a variant, never flattened across one. An agent proposes reference
+  shots with reasons and confidence; a human must approve before group-scoped
+  match proposals appear. Proposals are deterministic, disabled, and carry
+  their reference + group context. Global median matching stays an explicit
+  diagnostic, not a default.
 - **Temporal QC** — flicker, highlight/shadow measurements, and blank /
   duplicate damaged-frame signatures, alongside blur-pulse detection — all
   reported as *evidence, not defects* for comparing similar shots.
@@ -115,7 +118,7 @@ record reasoning.
 .venv/bin/python -m pytest
 ```
 
-337 tests, including exhaustive SMPTE drop-frame round-trips, real
+344 tests, including exhaustive SMPTE drop-frame round-trips, real
 ffmpeg-encoded fixtures, and end-to-end pipeline + MCP checks. Tests that need
 `ffmpeg` skip automatically when it's absent.
 

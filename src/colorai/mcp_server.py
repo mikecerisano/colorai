@@ -542,26 +542,33 @@ def merge_shots(project: str, shot_id_a: int, shot_id_b: int) -> dict:
 
 @mcp.tool()
 def create_shot_group(
-    project: str, asset_id: int, name: str, kind: str = "generic", camera: str | None = None
+    project: str,
+    asset_id: int,
+    name: str,
+    kind: str = "generic",
+    camera: str | None = None,
+    parent_id: int | None = None,
 ) -> dict:
-    """Create a scene/camera-family or interview/setup group for an asset.
+    """Create a scene/camera-family, interview/setup, or lighting-variant group.
 
     ``kind="setup"`` marks an interview/setup family (the matching unit);
-    ``camera`` is an optional human-assigned angle label ("A", "wide", ...).
+    ``kind="variant"`` marks a lighting variant inside a family (``parent_id``
+    must be the family's id). ``camera`` is an optional human-assigned angle
+    label ("A", "wide", ...).
     """
     from colorai.editorial import create_group as _create
 
-    g = _create(_open(project), asset_id, name, kind=kind, camera=camera)
-    return {"id": g.id, "name": g.name, "kind": g.kind, "camera": g.camera}
+    g = _create(_open(project), asset_id, name, kind=kind, camera=camera, parent_id=parent_id)
+    return {"id": g.id, "name": g.name, "kind": g.kind, "camera": g.camera, "parent_id": g.parent_id}
 
 
 @mcp.tool()
 def list_shot_groups(project: str, asset_id: int) -> list[dict]:
-    """List shot groups (scene/camera families / setups) for an asset."""
+    """List shot groups (scene/camera families / setups / variants) for an asset."""
     from colorai.editorial import list_groups as _list
 
     return [
-        {"id": g.id, "name": g.name, "kind": g.kind, "camera": g.camera}
+        {"id": g.id, "name": g.name, "kind": g.kind, "camera": g.camera, "parent_id": g.parent_id}
         for g in _list(_open(project), asset_id)
     ]
 
@@ -726,6 +733,40 @@ def match_subject_setup(
 
 
 @mcp.tool()
+def cross_variant_skin_consistency(
+    project: str, asset_id: int, subject_id: int, family_group_id: int
+) -> dict:
+    """Check a subject's skin across a setup family's lighting variants.
+
+    Whole-frame cross-variant differences (window light, background) are
+    expected and not corrected; only face/skin consistency is reported, with a
+    skin-only ``rgb_balance`` proposal when a variant genuinely drifts.
+    """
+    from colorai.matching import cross_variant_skin_consistency as _check
+
+    deviations, error = _check(
+        _open(project), asset_id, subject_id=subject_id, family_group_id=family_group_id
+    )
+    if error:
+        return {"error": error, "variants": []}
+    return {
+        "subject_id": subject_id,
+        "family_group_id": family_group_id,
+        "variants": [
+            {
+                "variant_id": d.variant_id,
+                "distance": round(d.distance, 4),
+                "is_issue": d.is_issue,
+                "correction": {"kind": d.correction.kind, "parameters": d.correction.parameters}
+                if d.correction
+                else None,
+            }
+            for d in deviations
+        ],
+    }
+
+
+@mcp.tool()
 def matching_workspace(project: str, asset_id: int) -> dict:
     """Structured read for matching: subjects, setup groups, member shots,
     metrics, skin samples, references, and review state."""
@@ -815,6 +856,7 @@ def matching_workspace(project: str, asset_id: int) -> dict:
                     "name": g.name,
                     "kind": g.kind,
                     "camera": g.camera,
+                    "parent_id": g.parent_id,
                     "member_shots": [shot_view(s) for s in shots if s.group_id == g.id],
                 }
                 for g in groups

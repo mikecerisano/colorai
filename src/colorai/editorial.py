@@ -83,7 +83,8 @@ def set_excused(store: ProjectStore, shot_id: int, excused: bool) -> Shot | None
 
 GROUP_KIND_SETUP = "setup"
 GROUP_KIND_GENERIC = "generic"
-GROUP_KINDS = (GROUP_KIND_GENERIC, GROUP_KIND_SETUP)
+GROUP_KIND_VARIANT = "variant"
+GROUP_KINDS = (GROUP_KIND_GENERIC, GROUP_KIND_SETUP, GROUP_KIND_VARIANT)
 
 
 def create_group(
@@ -93,18 +94,32 @@ def create_group(
     *,
     kind: str = GROUP_KIND_GENERIC,
     camera: str | None = None,
+    parent_id: int | None = None,
 ) -> ShotGroup:
-    """Create a shot group (scene / camera family / interview setup) on an asset.
+    """Create a shot group (scene / camera family / interview setup / variant).
 
-    ``kind="setup"`` marks an interview/setup family (the unit for group-aware
-    matching); ``camera`` is an optional human/agent-assigned angle label.
+    ``kind="setup"`` marks an interview/setup family (the matching unit);
+    ``kind="variant"`` marks a **lighting variant** within a setup family (its
+    ``parent_id`` must point to that family), each carrying its own approved
+    reference. ``camera`` is an optional human/agent-assigned angle label.
     """
     if kind not in GROUP_KINDS:
         raise ValueError(f"invalid group kind {kind!r}")
     with store.session() as session:
         if session.get(MediaAsset, asset_id) is None:
             raise ValueError(f"asset {asset_id} not found")
-        group = ShotGroup(asset_id=asset_id, name=name, kind=kind, camera=camera)
+        if kind == GROUP_KIND_VARIANT:
+            if parent_id is None:
+                raise ValueError("a variant group requires a parent setup family")
+            parent = session.get(ShotGroup, parent_id)
+            if parent is None or parent.asset_id != asset_id or parent.kind != GROUP_KIND_SETUP:
+                raise ValueError("variant parent must be a setup family in the same asset")
+        elif parent_id is not None:
+            raise ValueError("only 'variant' groups may have a parent")
+
+        group = ShotGroup(
+            asset_id=asset_id, name=name, kind=kind, camera=camera, parent_id=parent_id
+        )
         session.add(group)
         session.flush()
         session.refresh(group)

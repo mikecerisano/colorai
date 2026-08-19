@@ -233,6 +233,14 @@ matching is:
   reference and group, and persist **disabled** (never auto-applied). Global
   median matching (`analysis.find_outliers`) stays available as an explicit
   diagnostic, not a default.
+* **Lighting variants** — a setup family can hold ``variant`` child groups
+  (`ShotGroup.parent_id`), one per real natural-light change within an
+  interview. Each variant gets its own approved reference; matching within a
+  variant is strict and never falls back to another lighting condition's
+  reference. Cross-variant whole-frame differences (window light, background)
+  are expected and are *not* corrected — ``cross_variant_skin_consistency``
+  checks only face/skin consistency across variants and reports a skin-only
+  ``rgb_balance`` when a variant genuinely drifts.
 * **QC signals are evidence** — clipping/crush, blur, flicker, and
   blank/duplicate frames are reported as measurements with interpretation
   notes (bright windows, practicals, dark furniture are often intentional),

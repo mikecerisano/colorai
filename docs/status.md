@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 337 tests passing.
+Current progress. 344 tests passing.
 
 ## Done
 
@@ -102,6 +102,14 @@ Current progress. 337 tests passing.
   explicit diagnostic, not the default. ``matching_workspace`` (MCP) returns
   the structured view: subjects, setup groups, member shots, metrics, skin
   samples, references, and review state.
+- **Approved lighting variants** — a setup family can hold ``variant`` child
+  groups (``ShotGroup.parent_id``) for real natural-light changes across an
+  interview. Each variant gets its own approved reference (approving a variant
+  reference never clobbers the subject's hero shot); matching within a variant
+  is strict (no cross-lighting fallback). Cross-variant *whole-frame*
+  differences are treated as expected — ``cross_variant_skin_consistency``
+  checks only face/skin consistency and proposes a skin-only ``rgb_balance``
+  when a variant genuinely drifts.
 - **Temporal QC** — `qc.py` detects frame-to-frame flicker, per-shot clipped
   highlights / crushed blacks (from stored luma percentiles), and blank /
   duplicate damaged-frame signatures; exposed via MCP. Reports carry
@@ -137,11 +145,11 @@ Current progress. 337 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 337 tests across timecode, project model, migrations (incl. legacy
+- 344 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
   auto-assignment), correction, LUT/curve, render, resumability, editorial,
-  references, matching, analysis, face, skin, skin analysis, tracking,
-  anomaly, QC, generative, restoration, MCP, UI, and CLI.
+  references, matching (incl. variants), analysis, face, skin, skin analysis,
+  tracking, anomaly, QC, generative, restoration, MCP, UI, and CLI.
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45
   shots, three skin subjects separated, and per-subject skin drift flagged
   with proposed corrections.

@@ -194,6 +194,7 @@ def test_mcp_server_lists_tools():
     assert "match_subject_setup" in names
     assert "matching_workspace" in names
     assert "update_shot_group" in names
+    assert "cross_variant_skin_consistency" in names
 
 
 def test_editorial_review_and_group_tools(tmp_path):
@@ -334,3 +335,20 @@ def test_matching_workspace_tool(tmp_path):
     assert ws["groups"][0]["camera"] == "A"
     assert [s["id"] for s in ws["groups"][0]["member_shots"]] == [shots[1].id]
     assert ws["reference_proposals"] == []
+
+
+def test_variant_group_and_cross_variant_tool(tmp_path):
+    db, asset, shots, alice = _matching_store(tmp_path)
+    family = mcp_server.create_shot_group(db, asset.id, "interview", kind="setup")
+    variant = mcp_server.create_shot_group(
+        db, asset.id, "morning", kind="variant", parent_id=family["id"]
+    )
+    assert variant["parent_id"] == family["id"]
+
+    mcp_server.assign_shot_group(db, shots[0].id, variant["id"])
+    mcp_server.assign_shot_group(db, shots[1].id, variant["id"])
+
+    result = mcp_server.cross_variant_skin_consistency(db, asset.id, alice.id, family["id"])
+    assert result["family_group_id"] == family["id"]
+    # The only variant's median skin equals the subject baseline -> no issue.
+    assert all(not v["is_issue"] for v in result["variants"])

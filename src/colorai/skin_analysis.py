@@ -339,17 +339,28 @@ def delete_subject(store: ProjectStore, subject_id: int) -> None:
 # Per-subject skin matching
 # ---------------------------------------------------------------------------
 
-def propose_skin_match(
-    reference: np.ndarray, target: FaceSkin, *, tolerance: float = DEFAULT_MATCH_TOLERANCE
+def skin_balance_correction(
+    reference: np.ndarray, target_bgr: tuple[float, float, float], *, tolerance: float = DEFAULT_MATCH_TOLERANCE
 ) -> ProposedCorrection | None:
-    """Propose an ``rgb_balance`` correction to match a face to a reference skin."""
+    """Propose an ``rgb_balance`` correction to match a BGR sample to a reference.
+
+    Shared by per-face matching and cross-variant skin consistency, so the two
+    agree on what counts as a real skin difference.
+    """
     gains = [
         float(_clamp(reference[i] / t)) if t > 1e-3 else 1.0
-        for i, t in enumerate((target.b, target.g, target.r))
+        for i, t in enumerate(target_bgr)
     ]
     if max(abs(g - 1.0) for g in gains) > tolerance:
         return ProposedCorrection("rgb_balance", {"gain": [round(g, 4) for g in gains]})
     return None
+
+
+def propose_skin_match(
+    reference: np.ndarray, target: FaceSkin, *, tolerance: float = DEFAULT_MATCH_TOLERANCE
+) -> ProposedCorrection | None:
+    """Propose an ``rgb_balance`` correction to match a face to a reference skin."""
+    return skin_balance_correction(reference, (target.b, target.g, target.r), tolerance=tolerance)
 
 
 def _subject_reference(store: ProjectStore, subject: Subject, faces: list[FaceSkin]) -> np.ndarray:

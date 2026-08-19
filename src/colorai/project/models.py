@@ -179,6 +179,11 @@ class ShotGroup(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     kind: Mapped[str] = mapped_column(String(16), nullable=False, default="generic")
     camera: Mapped[str | None] = mapped_column(String(64))
+    # For ``kind="variant"``: the parent setup family this lighting variant
+    # belongs to. ``NULL`` for top-level groups (``generic``/``setup``).
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shot_groups.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     asset: Mapped[MediaAsset] = relationship()

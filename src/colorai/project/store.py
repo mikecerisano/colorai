@@ -72,6 +72,7 @@ def _legacy_chain(inspector) -> list[tuple[str, bool]]:
         ("c7d3e8a1f2b4", "source_hash" in columns("media_assets")),
         ("b5e2d9c3a4f6", "shot_groups" in tables and "review_status" in columns("shots")),
         ("d8f4e6a1c2b3", "reference_proposals" in tables and "kind" in columns("shot_groups")),
+        ("e7a2b4c5d6f8", "parent_id" in columns("shot_groups")),
     ]
 
 

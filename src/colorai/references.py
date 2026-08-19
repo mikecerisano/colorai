@@ -105,7 +105,10 @@ def _set_state(store: ProjectStore, proposal_id: int, state: str) -> ReferencePr
         if proposal is None:
             return None
         proposal.state = state
-        if state == STATE_APPROVED and proposal.subject_id is not None:
+        # Approving a subject-level (no group) proposal sets the subject's
+        # asset-wide hero shot. Group- or variant-scoped proposals must NOT:
+        # each scope keeps its own reference.
+        if state == STATE_APPROVED and proposal.subject_id is not None and proposal.group_id is None:
             subject = session.get(Subject, proposal.subject_id)
             if subject is not None:
                 subject.reference_shot_id = proposal.shot_id
@@ -123,18 +126,17 @@ def reject_reference(store: ProjectStore, proposal_id: int) -> ReferenceProposal
     return _set_state(store, proposal_id, STATE_REJECTED)
 
 
-def effective_reference_shot_id(
+def approved_reference_for_scope(
     store: ProjectStore,
     *,
     asset_id: int | None = None,
     subject_id: int | None = None,
     group_id: int | None = None,
 ) -> int | None:
-    """The approved reference shot for a scope (or ``None`` when undecided).
+    """The shot of an approved proposal for the *exact* scope, or ``None``.
 
-    An approved proposal for the exact scope wins; otherwise a subject's
-    explicitly-set hero shot (``Subject.reference_shot_id``) is the fallback.
-    Both are human decisions — never an automatic default.
+    No fallback: this is the strict lookup a lighting variant uses, so a
+    variant cannot silently inherit another scope's reference.
     """
     with store.session() as session:
         query = session.query(ReferenceProposal).filter(
@@ -151,9 +153,32 @@ def effective_reference_shot_id(
         else:
             query = query.filter(ReferenceProposal.group_id.is_(None))
         latest = query.order_by(ReferenceProposal.id.desc()).first()
-        if latest is not None:
-            return latest.shot_id
+        return latest.shot_id if latest is not None else None
 
+
+def effective_reference_shot_id(
+    store: ProjectStore,
+    *,
+    asset_id: int | None = None,
+    subject_id: int | None = None,
+    group_id: int | None = None,
+) -> int | None:
+    """The approved reference for a scope, with subject-hero fallback.
+
+    An approved proposal for the exact scope wins; otherwise a subject's
+    explicitly-set hero shot (``Subject.reference_shot_id``) is the fallback.
+    Both are human decisions — never an automatic default.
+
+    Lighting-variant scopes should use :func:`approved_reference_for_scope`
+    instead, so a variant cannot inherit a reference from outside its own
+    lighting conditions.
+    """
+    exact = approved_reference_for_scope(
+        store, asset_id=asset_id, subject_id=subject_id, group_id=group_id
+    )
+    if exact is not None:
+        return exact
+    with store.session() as session:
         if subject_id is not None:
             subject = session.get(Subject, subject_id)
             if subject is not None and subject.reference_shot_id is not None:
