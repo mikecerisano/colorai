@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Scratch / ad-hoc checks
+_scratch/
+
+# Test / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Project runtime data (generated media, caches, databases, models)
+data/
+cache/
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Media (never commit source or render artifacts)
+*.mov
+*.mp4
+*.mxf
+*.mkv
+*.prores
+*.dpx
+*.exr
+*.tiff
+*.tif
+*.cube.bak
+*.png.tmp
+
+# OS / editor
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Secrets
+.env
+*.key
+secrets.*
