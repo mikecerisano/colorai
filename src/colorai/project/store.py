@@ -45,6 +45,26 @@ def _enable_foreign_keys(engine: Engine) -> None:
         cursor.close()
 
 
+def _migrate(path: Path) -> None:
+    """Apply Alembic migrations to a file-based project database.
+
+    Idempotent: ``upgrade head`` is a no-op when already current, and applies
+    any pending revisions when opening an older database.
+    """
+    import os
+
+    import colorai
+    from alembic import command
+    from alembic.config import Config
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pkg_dir = Path(colorai.__file__).resolve().parent
+    cfg = Config(str(pkg_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(pkg_dir / "migrations"))
+    os.environ["COLORAI_DB_URL"] = f"sqlite+pysqlite:///{path.resolve().as_posix()}"
+    command.upgrade(cfg, "head")
+
+
 class ProjectStore:
     """Thin wrapper around a SQLite project database."""
 
@@ -56,16 +76,29 @@ class ProjectStore:
 
     @classmethod
     def create(cls, path: str | Path = ":memory:") -> "ProjectStore":
-        """Create a new project database (tables created from the schema)."""
-        engine = _sqlite_engine(path)
+        """Create (or migrate) a project database.
+
+        In-memory databases use ``create_all`` (test convenience); file
+        databases are created via Alembic migrations so the schema is
+        versioned and existing databases are upgraded in place.
+        """
+        if str(path) == ":memory:":
+            engine = _sqlite_engine(path)
+            _enable_foreign_keys(engine)
+            Base.metadata.create_all(engine)
+            return cls(engine)
+        db_path = Path(path)
+        _migrate(db_path)
+        engine = _sqlite_engine(db_path)
         _enable_foreign_keys(engine)
-        Base.metadata.create_all(engine)
         return cls(engine)
 
     @classmethod
     def open(cls, path: str | Path) -> "ProjectStore":
-        """Open an existing project database without creating tables."""
-        engine = _sqlite_engine(path)
+        """Open an existing project database, applying pending migrations."""
+        db_path = Path(path)
+        _migrate(db_path)
+        engine = _sqlite_engine(db_path)
         _enable_foreign_keys(engine)
         return cls(engine)
 

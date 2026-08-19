@@ -144,6 +144,18 @@ def test_persist_proposals():
     assert all(c.enabled for c in persisted)
 
 
+def test_persist_proposals_is_idempotent():
+    store = ProjectStore.create(":memory:")
+    asset, shots = _build_three_shot_asset(store)
+    outliers = find_outliers(store, asset.id)
+
+    assert len(persist_proposals(store, outliers)) == 2
+    assert persist_proposals(store, outliers) == []  # re-run creates nothing
+
+    with store.session() as session:
+        assert session.query(Correction).count() == 2
+
+
 def test_feature_from_image(tmp_path):
     path = tmp_path / "reference.png"
     cv2.imwrite(str(path), np.full((16, 16, 3), [128, 128, 128], dtype=np.uint8))

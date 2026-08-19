@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 229 tests passing.
+Current progress. 239 tests passing.
 
 ## Done
 
@@ -75,7 +75,7 @@ Current progress. 229 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 229 tests across timecode, project model, migrations, ingest, shot
+- 239 tests across timecode, project model, migrations, ingest, shot
   detection, frames, metrics, pipeline, correction, analysis, face, skin,
   skin analysis, tracking, anomaly, restoration, MCP, UI, and CLI.
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45

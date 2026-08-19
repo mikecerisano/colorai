@@ -266,11 +266,29 @@ def persist_proposals(
     *,
     enabled: bool = True,
 ) -> list[Correction]:
-    """Persist proposed corrections as ``Correction`` rows (for approval)."""
+    """Persist proposed corrections as ``Correction`` rows (for approval).
+
+    Idempotent: a proposal for a ``(shot_id, kind)`` that already exists is
+    skipped, so re-running ``apply-proposals`` does not create duplicates.
+    """
     created: list[Correction] = []
     with store.session() as session:
+        desired = {(d.shot_id, p.kind) for d in deviations for p in d.corrections}
+        existing: set[tuple[int, str]] = set()
+        if desired:
+            shot_ids = {shot_id for shot_id, _ in desired}
+            existing = {
+                (c.shot_id, c.kind)
+                for c in session.query(Correction)
+                .filter(Correction.shot_id.in_(shot_ids))
+                .all()
+            }
+
         for deviation in deviations:
             for proposal in deviation.corrections:
+                key = (deviation.shot_id, proposal.kind)
+                if key in existing:
+                    continue
                 correction = Correction(
                     shot_id=deviation.shot_id,
                     kind=proposal.kind,
@@ -279,6 +297,7 @@ def persist_proposals(
                 )
                 session.add(correction)
                 created.append(correction)
+                existing.add(key)
         session.flush()
         for correction in created:
             session.refresh(correction)

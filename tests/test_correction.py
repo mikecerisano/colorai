@@ -107,6 +107,25 @@ def test_validate_correction_accepts_defaults():
         validate_correction(kind, {})  # defaults are valid
 
 
+@pytest.mark.parametrize(
+    ("kind", "params"),
+    [
+        ("exposure", {"gain": float("nan")}),
+        ("exposure", {"gain": float("inf")}),
+        ("offset", {"value": float("nan")}),
+        ("rgb_balance", {"gain": [1.0, float("nan"), 1.0]}),
+        ("contrast", {"amount": float("nan")}),
+        ("contrast", {"pivot": float("inf")}),
+        ("saturation", {"amount": float("inf")}),
+        ("hue_rotate", {"degrees": float("nan")}),
+        ("cdl", {"slope": [1.0, float("nan"), 1.0]}),
+    ],
+)
+def test_validate_correction_rejects_non_finite(kind, params):
+    with pytest.raises(ValueError):
+        validate_correction(kind, params)
+
+
 def test_preview_correction(tmp_path):
     store = ProjectStore.create(":memory:")
     project = store.create_project("correction test")

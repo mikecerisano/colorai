@@ -22,6 +22,7 @@ Supported kinds (see :func:`validate_correction` for parameter shapes):
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -38,6 +39,15 @@ _LUMA = (0.2126, 0.7152, 0.0722)
 # Parameter validation
 # ---------------------------------------------------------------------------
 
+def _is_number(value: Any) -> bool:
+    """True for finite int/float (excludes bool and NaN/inf)."""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
 def validate_correction(kind: str, parameters: dict[str, Any]) -> None:
     """Raise ``ValueError`` if ``parameters`` are invalid for ``kind``."""
     if kind == "cdl":
@@ -47,49 +57,51 @@ def validate_correction(kind: str, parameters: dict[str, Any]) -> None:
                 continue
             if not isinstance(v, (list, tuple)) or len(v) != 3:
                 raise ValueError(f"cdl {key} must be a 3-element list")
+            if any(not _is_number(p) for p in v):
+                raise ValueError(f"cdl {key} values must be finite numbers")
             if key == "power" and any(p <= 0 for p in v):
                 raise ValueError("cdl power must be > 0")
         return
 
     if kind == "exposure":
         gain = parameters.get("gain", 1.0)
-        if not isinstance(gain, (int, float)) or gain < 0:
-            raise ValueError("exposure gain must be a non-negative number")
+        if not _is_number(gain) or gain < 0:
+            raise ValueError("exposure gain must be a non-negative finite number")
         return
 
     if kind == "offset":
         value = parameters.get("value", 0.0)
-        if not isinstance(value, (int, float)):
-            raise ValueError("offset value must be a number")
+        if not _is_number(value):
+            raise ValueError("offset value must be a finite number")
         return
 
     if kind == "rgb_balance":
         gain = parameters.get("gain", [1.0, 1.0, 1.0])
         if not isinstance(gain, (list, tuple)) or len(gain) != 3:
             raise ValueError("rgb_balance gain must be a 3-element list")
-        if any(g < 0 for g in gain):
-            raise ValueError("rgb_balance gain must be non-negative")
+        if any(not _is_number(g) or g < 0 for g in gain):
+            raise ValueError("rgb_balance gain must be non-negative finite numbers")
         return
 
     if kind == "contrast":
         amount = parameters.get("amount", 1.0)
         pivot = parameters.get("pivot", 0.5)
-        if not isinstance(amount, (int, float)):
-            raise ValueError("contrast amount must be a number")
-        if not isinstance(pivot, (int, float)) or not (0.0 <= pivot <= 1.0):
+        if not _is_number(amount):
+            raise ValueError("contrast amount must be a finite number")
+        if not _is_number(pivot) or not (0.0 <= pivot <= 1.0):
             raise ValueError("contrast pivot must be in [0, 1]")
         return
 
     if kind == "saturation":
         amount = parameters.get("amount", 1.0)
-        if not isinstance(amount, (int, float)) or amount < 0:
-            raise ValueError("saturation amount must be a non-negative number")
+        if not _is_number(amount) or amount < 0:
+            raise ValueError("saturation amount must be a non-negative finite number")
         return
 
     if kind == "hue_rotate":
         degrees = parameters.get("degrees", 0.0)
-        if not isinstance(degrees, (int, float)):
-            raise ValueError("hue_rotate degrees must be a number")
+        if not _is_number(degrees):
+            raise ValueError("hue_rotate degrees must be a finite number")
         return
 
     raise ValueError(f"unknown correction kind: {kind!r}")
