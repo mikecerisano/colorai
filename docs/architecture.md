@@ -1,0 +1,152 @@
+# ColorAI — Architecture
+
+ColorAI is a local-first AI finishing and color-QC assistant for professionally
+finished video. This document describes the design and the decisions behind it;
+see `../AGENTS.md` for contributor handoff and `status.md` for current progress.
+
+## Product principles
+
+These are constraints, not aspirations. Everything in the codebase traces back
+to one of them.
+
+1. **Local-first** — large media stays on the machine. Decoding, shot detection,
+   frame extraction, statistics, and (eventually) restoration run locally.
+   The application exposes local deterministic APIs, a CLI, and an MCP-friendly
+   shape; no cloud upload is required.
+2. **Non-destructive** — source media is never modified. Every analysis and
+   correction is an explicit row in a project database; anything can be
+   reproduced, disabled, rejected, or removed.
+3. **Deterministic grading** — routine corrections are deterministic operations
+   (exposure, offset, RGB balance, CDL, curves, LUTs, OCIO transforms, masks),
+   never generative image synthesis.
+4. **Temporal stability** — a correction approved for a shot applies the same
+   mathematical transform to every frame of that shot unless explicitly
+   keyframed. No per-frame model flicker.
+5. **Human approval** — the filmmaker always retains authority. The tool
+   detects, measures, proposes; it does not decide.
+
+## Stack
+
+| Concern | Choice | Why |
+| --- | --- | --- |
+| Runtime | Python 3.11+ | mature media/ML ecosystem |
+| Persistence | SQLAlchemy 2.x + SQLite | local-first, zero-config, single-file project |
+| Media probing | ffmpeg / ffprobe | standard, ubiquitous, no reinvented demuxer |
+| Shot detection | PySceneDetect >= 0.7 | reusable, deterministic content detection |
+| Image math | NumPy + OpenCV | vectorized, local |
+| Review UI | FastAPI + Jinja2 + Uvicorn | small, local, testable |
+| Tests | pytest | — |
+
+See `dependency-audit.md` for the full reuse vs. build breakdown.
+
+## Time and frame coordinates
+
+The canonical timeline coordinate is the **zero-based absolute frame index**
+into the decoded video stream, matching ffmpeg/ffprobe semantics
+(`nb_frames`, `select=eq(n\,N)`). Shot bounds are stored **inclusive**:
+`[start_frame, end_frame]`.
+
+SMPTE timecode is the human-facing coordinate. Every persisted shot and
+representative frame stores *both* a frame number and a timecode string, so
+source masters at different rates remain unambiguous even if a rate is later
+corrected.
+
+Timecode rules (see `src/colorai/core/timecode.py`):
+
+- **Non-drop-frame (NDF)** for 23.976 / 24 / 25 / 30 / 50 / 60 fps.
+- **Drop-frame (DF)** for 29.97 / 59.94 fps only, so timecode tracks wall
+  clock. Drop-frame timecode uses the `;` frame separator per SMPTE convention.
+
+The drop-frame inverse is implemented from the label-space accounting and is
+exhaustively round-trip tested (every frame of multiple 10-minute blocks).
+
+## Data model
+
+`src/colorai/project/models.py` — six explicit tables:
+
+```
+Project 1──n MediaAsset 1──n Shot 1──1 RepresentativeFrame
+                              │
+                              ├──n FrameMetrics   (luma/RGB/chroma statistics)
+                              └──n Correction     (kind + JSON parameters)
+```
+
+- `MediaAsset` holds probed stream metadata (resolution, `frame_rate`, frame
+  count, duration, pixel format, codec) and a derived `timecode_format`
+  (`NDF`/`DF`) plus a lifecycle `status`.
+- `Shot` stores inclusive `[start_frame, end_frame]` plus denormalized
+  start/end timecodes. A unique `(asset_id, index)` constraint enforces ordered,
+  non-overlapping coverage.
+- `RepresentativeFrame` is one still per shot (currently the middle frame).
+- `FrameMetrics` stores normalized `[0, 1]` luma percentiles, dispersion,
+  per-channel RGB means, and a mean chroma-magnitude saturation proxy. These
+  are measurements, not decisions.
+- `Correction` is a `kind` discriminator (e.g. `cdl`, `exposure`, `offset`,
+  `white_balance`, `contrast`, `saturation`, `hue_rotate`) plus a JSON
+  `parameters` blob and an `enabled` flag. See "Correction model" below.
+
+`src/colorai/project/store.py` provides `ProjectStore` (SQLite engine,
+`PRAGMA foreign_keys=ON`, transactional `session()` context manager) and
+construction helpers that derive timecode from frames so a mismatch cannot be
+stored. SQLite foreign-key enforcement is enabled per connection because
+SQLAlchemy does not do it by default.
+
+**Schema evolution**: tables are created with `Base.metadata.create_all`
+(idempotent) for now. Alembic migrations are deferred until the schema
+stabilizes across a couple of real projects; the decision to defer is
+deliberate and reversible (see `dependency-audit.md`).
+
+## Pipeline
+
+`colorai analyze <master> --project <db>` runs `analyze_master` in
+`src/colorai/pipeline.py`, non-destructively:
+
+1. **Ingest** (`media/probe.py`, `ingest.py`) — ffprobe the master, register a
+   `MediaAsset`. Frame rate is parsed from the exact rational
+   (`avg_frame_rate`), so 29.97 is detected correctly for drop-frame.
+2. **Shot detection** (`shotdetect.py`) — PySceneDetect `ContentDetector`;
+   scene list is converted from PySceneDetect's 0-based half-open intervals to
+   ColorAI's inclusive bounds and persisted with derived timecodes.
+3. **Representative frames** (`frames.py`) — the middle frame of each shot is
+   extracted frame-accurately with `ffmpeg -vf select=eq(n\,N)` and recorded.
+4. **Metrics** (`metrics.py`) — image statistics are computed from each still
+   and persisted.
+5. The asset is marked `analyzed`.
+
+`colorai ui` serves `src/colorai/ui.py`: a server-rendered review screen with
+one card per shot (still, timecode range, metrics). Stills are served directly
+from the stills directory.
+
+## Correction model
+
+`Correction` rows are **deterministic, temporally stable operations**. The
+`kind` field is the discriminator; `parameters` carries the operation's
+parameters; `enabled` allows a correction to be turned off without deletion.
+
+Planned kinds (parameters documented in the transform module as it lands):
+
+- `cdl` — ASC CDL slope/offset/power per channel
+- `exposure` / `offset` — global gain / lift
+- `rgb_balance` / `white_balance` — per-channel gain
+- `contrast` — contrast with a pivot
+- `saturation` — saturation scale
+- `hue_rotate` — hue rotation
+
+Generative restoration is **not** a `Correction` kind. It is reserved for
+genuinely damaged temporal intervals and will be modeled separately with its
+own approval workflow.
+
+## Conventions and decisions
+
+- **Frame numbers are zero-based and bounds are inclusive** everywhere; the
+  only exception is PySceneDetect's half-open intervals, which are converted at
+  the boundary of `shotdetect.py`.
+- **Timestamps are naive UTC** in SQLite (documented in `models.py`); switch to
+  aware datetimes deliberately if this ever changes.
+- **Deterministic filenames** for stills (`shot_0001_frame_000050.png`) make
+  extraction idempotent and reproducible.
+- **Frame-accurate extraction** uses `select=eq(n\,N)` (decodes from start);
+  a keyframe-seek fast path is a documented future optimization for long-form
+  media.
+- **The middle frame** is the representative still. A content-aware "best
+  frame" heuristic (sharpest, most representative) is a future refinement.
