@@ -184,6 +184,9 @@ def test_mcp_server_lists_tools():
     assert "merge_shots" in names
     assert "set_shot_review_status" in names
     assert "create_shot_group" in names
+    assert "detect_flicker" in names
+    assert "shot_clip_report" in names
+    assert "detect_blank_frames" in names
 
 
 def test_editorial_review_and_group_tools(tmp_path):
@@ -203,6 +206,22 @@ def test_editorial_review_and_group_tools(tmp_path):
     assert mcp_server.unassign_shot_group(db, shots[0].id) == "ok"
     assert mcp_server.delete_shot_group(db, group["id"]) == "ok"
     assert mcp_server.list_shot_groups(db, asset.id) == []
+
+
+def test_shot_clip_report_tool(tmp_path):
+    from colorai.project import FrameMetrics
+
+    db, asset, shots, subject = _make_store(tmp_path)
+    with ProjectStore.open(db).session() as session:
+        session.add(
+            FrameMetrics(shot_id=shots[0].id, frame_index=0, luma_p5=0.01, luma_p95=0.99)
+        )
+        session.commit()
+
+    report = mcp_server.shot_clip_report(db, asset.id)
+    assert report[0]["shot_id"] == shots[0].id
+    assert report[0]["clipped"] is True
+    assert report[0]["crushed"] is True
 
 
 def test_split_and_merge_tools(tmp_path):

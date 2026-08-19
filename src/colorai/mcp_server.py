@@ -275,6 +275,54 @@ def detect_blur_pulses(project: str, shot_id: int, samples: int = 16) -> list[di
 
 
 @mcp.tool()
+def detect_flicker(project: str, shot_id: int, samples: int = 24) -> list[dict]:
+    """Detect frame-to-frame luma flicker in a shot (inclusive frame intervals)."""
+    from colorai.project.models import MediaAsset, Shot
+    from colorai.qc import detect_flicker as _detect
+
+    store = _open(project)
+    with store.session() as session:
+        shot = session.get(Shot, shot_id)
+        if shot is None:
+            raise ValueError("shot not found")
+        asset = session.get(MediaAsset, shot.asset_id)
+
+    runs = _detect(
+        asset.source_path, shot.start_frame, shot.end_frame, asset.frame_rate,
+        samples=samples,
+    )
+    return [{"start_frame": a, "end_frame": b} for a, b in runs]
+
+
+@mcp.tool()
+def shot_clip_report(project: str, asset_id: int) -> list[dict]:
+    """Per-shot clipped-highlights / crushed-blacks report."""
+    from colorai.qc import shot_clip_report as _report
+
+    return _report(_open(project), asset_id)
+
+
+@mcp.tool()
+def detect_blank_frames(project: str, shot_id: int, samples: int = 24) -> list[dict]:
+    """Flag near-black / near-white frames (a damaged-frame signature) in a shot."""
+    from colorai.project.models import MediaAsset, Shot
+    from colorai.qc import detect_blank_frames as _detect
+
+    store = _open(project)
+    with store.session() as session:
+        shot = session.get(Shot, shot_id)
+        if shot is None:
+            raise ValueError("shot not found")
+        asset = session.get(MediaAsset, shot.asset_id)
+
+    blanks = _detect(
+        asset.source_path, shot.start_frame, shot.end_frame, asset.frame_rate,
+        samples=samples,
+    )
+    return [{"frame_index": b.frame_index, "kind": b.kind} for b in blanks]
+
+
+@mcp.tool()
 def get_shot_still(project: str, shot_id: int) -> Image:
     """Return a shot's representative frame as an image (for vision agents)."""
     from colorai.project.models import RepresentativeFrame, Shot

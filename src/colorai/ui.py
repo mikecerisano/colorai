@@ -379,6 +379,15 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
 
     # -- consistency analysis --------------------------------------------------
 
+    @app.get("/api/assets/{asset_id}/clip-report")
+    def asset_clip_report(asset_id: int):
+        from colorai.qc import shot_clip_report as _report
+
+        with store.session() as session:
+            if session.get(MediaAsset, asset_id) is None:
+                raise HTTPException(status_code=404, detail="asset not found")
+        return _report(store, asset_id)
+
     @app.get("/api/assets/{asset_id}/outliers")
     def asset_outliers(asset_id: int, reference_shot_id: int | None = None):
         from colorai.analysis import find_outliers
