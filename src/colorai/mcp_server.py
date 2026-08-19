@@ -584,11 +584,19 @@ def unassign_shot_group(project: str, shot_id: int) -> str:
 
 @mcp.tool()
 def add_correction(project: str, shot_id: int, kind: str, parameters: dict) -> dict:
-    """Add a deterministic correction to a shot."""
-    from colorai.correction import validate_correction
+    """Add a deterministic correction to a shot.
+
+    For ``lut`` corrections, the referenced ``.cube`` file's content hash is
+    recorded in the parameters.
+    """
+    from colorai.correction import normalize_parameters, validate_correction
     from colorai.project.models import Correction
 
     validate_correction(kind, parameters)
+    try:
+        parameters = normalize_parameters(kind, parameters)
+    except OSError as exc:
+        return {"error": str(exc)}
     store = _open(project)
     with store.session() as session:
         from colorai.project.models import Shot

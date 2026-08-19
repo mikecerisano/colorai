@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from colorai.correction import load_corrected_still, validate_correction
+from colorai.correction import load_corrected_still, normalize_parameters, validate_correction
 from colorai.project.models import (
     Correction,
     FrameMetrics,
@@ -329,11 +329,15 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
     @app.post("/api/shots/{shot_id}/corrections", status_code=201)
     def add_correction(shot_id: int, payload: CorrectionIn):
         _validate_or_400(payload.kind, payload.parameters)
+        try:
+            parameters = normalize_parameters(payload.kind, payload.parameters)
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         with store.session() as session:
             if session.get(Shot, shot_id) is None:
                 raise HTTPException(status_code=404, detail="shot not found")
             correction = Correction(
-                shot_id=shot_id, kind=payload.kind, parameters=payload.parameters
+                shot_id=shot_id, kind=payload.kind, parameters=parameters
             )
             session.add(correction)
             session.flush()

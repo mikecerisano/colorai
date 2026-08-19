@@ -24,6 +24,9 @@ Supported kinds (see :func:`validate_correction` for parameter shapes):
 * ``contrast``    — contrast with a pivot
 * ``saturation``  — luma-preserving saturation scale
 * ``hue_rotate``  — hue rotation in HSV space (degrees)
+* ``curve``       — tone curve from monotonic control points
+                    (``rgb`` / ``per_channel`` / ``luma`` modes)
+* ``lut``         — a ``.cube`` LUT (1D/3D) applied in linear light
 """
 
 from __future__ import annotations
@@ -40,6 +43,9 @@ from colorai.project.models import Correction, MediaAsset, Shot
 from colorai.project.store import ProjectStore
 
 _LUMA = (0.2126, 0.7152, 0.0722)
+
+# Identity control points for a curve with no explicit shape.
+_IDENTITY_CURVE = [[0.0, 0.0], [1.0, 1.0]]
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +117,28 @@ def validate_correction(kind: str, parameters: dict[str, Any]) -> None:
             raise ValueError("hue_rotate degrees must be a finite number")
         return
 
+    if kind == "curve":
+        mode = parameters.get("mode", "rgb")
+        if mode not in ("rgb", "per_channel", "luma"):
+            raise ValueError("curve mode must be 'rgb', 'per_channel', or 'luma'")
+        if mode == "per_channel":
+            points = parameters.get("points")
+            if not isinstance(points, dict) or set(points) != {"r", "g", "b"}:
+                raise ValueError("per_channel curve points must be {r, g, b}")
+            for key in ("r", "g", "b"):
+                _validate_curve_points(points[key])
+        else:
+            _validate_curve_points(parameters.get("points", _IDENTITY_CURVE))
+        return
+
+    if kind == "lut":
+        path = parameters.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("lut path must be a non-empty string")
+        if parameters.get("space", "linear") != "linear":
+            raise ValueError("lut space must be 'linear'")
+        return
+
     raise ValueError(f"unknown correction kind: {kind!r}")
 
 
@@ -137,6 +165,30 @@ def _finish(f: np.ndarray, was_uint8: bool) -> np.ndarray:
 
 def _as_vec3(value: Any, default: tuple[float, float, float]) -> np.ndarray:
     return np.asarray(value if value is not None else default, dtype=np.float64)
+
+
+def _validate_curve_points(points: Any) -> tuple[np.ndarray, np.ndarray]:
+    """Validate a curve's control points and return ``(xs, ys)`` arrays.
+
+    Points must be a list of ``[x, y]`` pairs with ``x`` strictly increasing
+    (so the curve is a function), ``y`` monotonic non-decreasing, and all
+    values finite within ``[0, 1]``.
+    """
+    if not isinstance(points, (list, tuple)) or len(points) < 2:
+        raise ValueError("curve points must be a list of at least 2 [x, y] pairs")
+    arr = np.asarray(points, dtype=np.float64)
+    if arr.ndim != 2 or arr.shape[1] != 2:
+        raise ValueError("curve points must be [x, y] pairs")
+    if any(not _is_number(v) for v in arr.ravel()):
+        raise ValueError("curve points must be finite numbers")
+    xs, ys = arr[:, 0], arr[:, 1]
+    if np.any(xs < 0.0) or np.any(xs > 1.0) or np.any(ys < 0.0) or np.any(ys > 1.0):
+        raise ValueError("curve points must lie within [0, 1]")
+    if np.any(np.diff(xs) <= 0.0):
+        raise ValueError("curve x coordinates must be strictly increasing")
+    if np.any(np.diff(ys) < 0.0):
+        raise ValueError("curve must be monotonic (non-decreasing)")
+    return xs, ys
 
 
 def apply_correction(image_rgb: np.ndarray, kind: str, parameters: dict[str, Any]) -> np.ndarray:
@@ -176,6 +228,26 @@ def apply_correction(image_rgb: np.ndarray, kind: str, parameters: dict[str, Any
         amount = float(parameters.get("amount", 1.0))
         luma = _LUMA[0] * lin[..., 0] + _LUMA[1] * lin[..., 1] + _LUMA[2] * lin[..., 2]
         lin = luma[..., None] + (lin - luma[..., None]) * amount
+    elif kind == "curve":
+        mode = parameters.get("mode", "rgb")
+        if mode == "luma":
+            xs, ys = _validate_curve_points(parameters.get("points", _IDENTITY_CURVE))
+            luma = _LUMA[0] * lin[..., 0] + _LUMA[1] * lin[..., 1] + _LUMA[2] * lin[..., 2]
+            curved = np.interp(luma, xs, ys)
+            ratio = np.where(luma > 1e-12, curved / np.maximum(luma, 1e-12), 1.0)
+            lin = lin * ratio[..., None]
+        elif mode == "per_channel":
+            points = parameters["points"]
+            for key, channel in (("r", 0), ("g", 1), ("b", 2)):
+                xs, ys = _validate_curve_points(points[key])
+                lin[..., channel] = np.interp(lin[..., channel], xs, ys)
+        else:  # rgb
+            xs, ys = _validate_curve_points(parameters.get("points", _IDENTITY_CURVE))
+            lin = np.interp(lin, xs, ys)
+    elif kind == "lut":
+        from colorai.lutcube import apply_cube, load_cube
+
+        lin = apply_cube(load_cube(parameters["path"]), lin)
     else:  # pragma: no cover - guarded by validate_correction
         raise ValueError(f"unknown correction kind: {kind!r}")
 
@@ -196,6 +268,24 @@ def apply_corrections(
             kind, params = c
         out = apply_correction(out, kind, params)
     return out
+
+
+def normalize_parameters(kind: str, parameters: dict[str, Any]) -> dict[str, Any]:
+    """Return ``parameters`` ready for persistence.
+
+    For ``lut`` corrections this adds ``content_hash`` (a fingerprint of the
+    referenced ``.cube`` file) so the persisted row records exactly which file
+    version it used. Other kinds pass through unchanged.
+    """
+    if kind == "lut":
+        path = parameters.get("path")
+        if isinstance(path, str) and path.strip():
+            from colorai.lutcube import cube_content_hash
+
+            out = dict(parameters)
+            out.setdefault("content_hash", cube_content_hash(path))
+            return out
+    return parameters
 
 
 # ---------------------------------------------------------------------------

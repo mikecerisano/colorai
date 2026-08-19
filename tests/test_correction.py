@@ -112,7 +112,7 @@ def test_validate_correction_rejects(kind, params):
 
 
 def test_validate_correction_accepts_defaults():
-    for kind in ("cdl", "exposure", "offset", "rgb_balance", "contrast", "saturation", "hue_rotate"):
+    for kind in ("cdl", "exposure", "offset", "rgb_balance", "contrast", "saturation", "hue_rotate", "curve"):
         validate_correction(kind, {})  # defaults are valid
 
 

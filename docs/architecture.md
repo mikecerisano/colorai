@@ -156,6 +156,17 @@ Planned kinds (parameters documented in the transform module as it lands):
 - `contrast` — contrast with a pivot
 - `saturation` — saturation scale
 - `hue_rotate` — hue rotation
+- `curve` — tone curve from monotonic control points (`rgb` / `per_channel` /
+  `luma` modes)
+- `lut` — a `.cube` LUT (1D/3D) applied in linear light
+
+`curve` and `lut` run in the same linear BT.709 working space as the other
+grades. `.cube` files are parsed by `lutcube.py` (1D linear / 3D trilinear
+interpolation, clamped to the file's `DOMAIN_MIN`/`DOMAIN_MAX`), fingerprinted
+by content hash (persisted on the correction), and cached by
+`(path, mtime, size)`. A `.cube` authored for display/log space is interpreted
+in the working space's linear domain — converting it is a caller/agent
+responsibility.
 
 `src/colorai/analysis.py` turns stored metrics into proposals: it flags shots
 that deviate from a median (or explicit) reference in luma, channel balance,

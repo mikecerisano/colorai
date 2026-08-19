@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 288 tests passing.
+Current progress. 315 tests passing.
 
 ## Done
 
@@ -86,6 +86,13 @@ Current progress. 288 tests passing.
 - **Temporal QC** — `qc.py` detects frame-to-frame flicker, per-shot clipped
   highlights / crushed blacks (from stored luma percentiles), and blank /
   duplicate damaged-frame signatures; exposed via MCP.
+- **Tone curves + `.cube` LUTs** — a `curve` kind (monotonic control points,
+  `rgb` / `per_channel` / `luma` modes) and a `lut` kind (1D/3D `.cube`,
+  trilinear/linear interpolation, domain clamping) both applied in linear
+  BT.709 light. `lutcube.py` parses `.cube` files, fingerprints them by content
+  hash (persisted on the correction), and caches parse results keyed by
+  `(path, mtime, size)`. Preview and render use the same transform, so parity
+  is inherent; LUT files are read-only.
 - **Docs** — `architecture.md`, `dependency-audit.md`, `research-notes.md`,
   `AGENTS.md`, this file.
 
@@ -106,10 +113,10 @@ Current progress. 288 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 288 tests across timecode, project model, migrations, ingest, shot
-  detection, frames, metrics, pipeline, correction, render, resumability,
-  editorial, analysis, face, skin, skin analysis, tracking, anomaly, QC,
-  generative, restoration, MCP, UI, and CLI.
+- 315 tests across timecode, project model, migrations, ingest, shot
+  detection, frames, metrics, pipeline, correction, LUT/curve, render,
+  resumability, editorial, analysis, face, skin, skin analysis, tracking,
+  anomaly, QC, generative, restoration, MCP, UI, and CLI.
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45
   shots, three skin subjects separated, and per-subject skin drift flagged
   with proposed corrections.
