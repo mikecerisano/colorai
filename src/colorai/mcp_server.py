@@ -232,6 +232,69 @@ def assign_face(project: str, skin_metric_id: int, subject_id: int) -> str:
 
 
 @mcp.tool()
+def unassign_face(project: str, skin_metric_id: int) -> str:
+    from colorai.skin_analysis import unassign_face as _unassign
+
+    _unassign(_open(project), skin_metric_id)
+    return "ok"
+
+
+@mcp.tool()
+def set_skin_metric(
+    project: str, skin_metric_id: int, mean_b: float, mean_g: float, mean_r: float
+) -> dict:
+    """Override a face's sampled skin signature (fix a bad skin sample)."""
+    from colorai.skin_analysis import set_skin_metric as _set
+
+    m = _set(
+        _open(project),
+        skin_metric_id,
+        mean_b=mean_b,
+        mean_g=mean_g,
+        mean_r=mean_r,
+    )
+    return (
+        {"id": m.id, "mean_bgr": [round(m.mean_b, 4), round(m.mean_g, 4), round(m.mean_r, 4)]}
+        if m
+        else {"error": "skin metric not found"}
+    )
+
+
+@mcp.tool()
+def add_skin_metric(
+    project: str,
+    shot_id: int,
+    face_index: int,
+    mean_b: float,
+    mean_g: float,
+    mean_r: float,
+    subject_id: int | None = None,
+) -> dict:
+    """Add a face the detector missed, with an explicit skin signature."""
+    from colorai.skin_analysis import add_skin_metric as _add
+
+    m = _add(
+        _open(project),
+        shot_id,
+        face_index,
+        mean_b=mean_b,
+        mean_g=mean_g,
+        mean_r=mean_r,
+        subject_id=subject_id,
+    )
+    return {"id": m.id, "shot_id": m.shot_id, "face_index": m.face_index, "subject_id": m.subject_id}
+
+
+@mcp.tool()
+def delete_skin_metric(project: str, skin_metric_id: int) -> str:
+    """Remove a false-positive face."""
+    from colorai.skin_analysis import delete_skin_metric as _delete
+
+    _delete(_open(project), skin_metric_id)
+    return "ok"
+
+
+@mcp.tool()
 def merge_subjects(project: str, keep_id: int, drop_id: int) -> str:
     """Merge two subjects (faces of ``drop_id`` move to ``keep_id``)."""
     from colorai.skin_analysis import merge_subjects as _merge

@@ -118,6 +118,23 @@ def test_skin_consistency_tool(tmp_path):
     assert result[0]["is_outlier"] is False
 
 
+def test_skin_metric_tools(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+
+    # The existing face is shots[0] skin_metric id 1.
+    result = mcp_server.set_skin_metric(db, 1, 0.40, 0.43, 0.63)
+    assert result["mean_bgr"] == [0.4, 0.43, 0.63]
+
+    added = mcp_server.add_skin_metric(db, shots[1].id, 0, 0.5, 0.5, 0.5, subject_id=subject.id)
+    assert added["shot_id"] == shots[1].id
+
+    assert mcp_server.unassign_face(db, 1) == "ok"
+    assert mcp_server.delete_skin_metric(db, 1) == "ok"
+
+    detail = mcp_server.get_shot(db, shots[0].id)
+    assert detail["skin_faces"] == []
+
+
 def test_mcp_server_lists_tools():
     import asyncio
 

@@ -256,6 +256,63 @@ def unassign_face(store: ProjectStore, skin_metric_id: int) -> None:
         )
 
 
+def set_skin_metric(
+    store: ProjectStore,
+    skin_metric_id: int,
+    *,
+    mean_b: float,
+    mean_g: float,
+    mean_r: float,
+) -> SkinMetric | None:
+    """Override a face's sampled skin signature (fix a bad auto-sample)."""
+    with store.session() as session:
+        metric = session.get(SkinMetric, skin_metric_id)
+        if metric is None:
+            return None
+        metric.mean_b = mean_b
+        metric.mean_g = mean_g
+        metric.mean_r = mean_r
+        session.flush()
+        session.refresh(metric)
+    return metric
+
+
+def add_skin_metric(
+    store: ProjectStore,
+    shot_id: int,
+    face_index: int,
+    *,
+    mean_b: float,
+    mean_g: float,
+    mean_r: float,
+    subject_id: int | None = None,
+    sample_pixels: int = 0,
+) -> SkinMetric:
+    """Add a face the detector missed, with an explicit skin signature."""
+    metric = SkinMetric(
+        shot_id=shot_id,
+        face_index=face_index,
+        mean_b=mean_b,
+        mean_g=mean_g,
+        mean_r=mean_r,
+        sample_pixels=sample_pixels,
+        subject_id=subject_id,
+    )
+    with store.session() as session:
+        session.add(metric)
+        session.flush()
+        session.refresh(metric)
+    return metric
+
+
+def delete_skin_metric(store: ProjectStore, skin_metric_id: int) -> None:
+    """Remove a false-positive face."""
+    with store.session() as session:
+        metric = session.get(SkinMetric, skin_metric_id)
+        if metric is not None:
+            session.delete(metric)
+
+
 def merge_subjects(store: ProjectStore, keep_id: int, drop_id: int) -> None:
     """Move all of ``drop_id``'s faces into ``keep_id`` and delete it."""
     with store.session() as session:

@@ -18,16 +18,19 @@ from colorai.project import (
 )
 from colorai.skin_analysis import (
     FaceSkin,
+    add_skin_metric,
     assign_face,
     auto_assign_subjects,
     cluster_embeddings,
     create_subject,
+    delete_skin_metric,
     delete_subject,
     face_features,
     merge_subjects,
     propose_skin_match,
     rename_subject,
     set_reference,
+    set_skin_metric,
     skin_consistency,
 )
 
@@ -116,6 +119,26 @@ def test_delete_subject_unassigns_faces():
 
     delete_subject(store, a.id)
     assert face_features(store, asset.id)[0].subject_id is None
+
+
+def test_skin_metric_edit_functions():
+    store = ProjectStore.create(":memory:")
+    asset, shots = _build_asset(store, n_shots=2)
+    a = create_subject(store, asset.id, "A")
+
+    # Override a skin sample (fix a bad auto-sample).
+    m = _add_face(store, shots[0].id, 0.35, 0.38, 0.58, subject_id=a.id)
+    updated = set_skin_metric(store, m.id, mean_b=0.40, mean_g=0.43, mean_r=0.63)
+    assert (updated.mean_b, updated.mean_g, updated.mean_r) == (0.40, 0.43, 0.63)
+
+    # Add a face the detector missed.
+    added = add_skin_metric(store, shots[1].id, 0, mean_b=0.5, mean_g=0.5, mean_r=0.5, subject_id=a.id)
+    assert added.shot_id == shots[1].id
+
+    # Remove a false-positive face.
+    delete_skin_metric(store, m.id)
+    assert len(face_features(store, asset.id)) == 1
+    assert face_features(store, asset.id)[0].shot_id == shots[1].id
 
 
 def test_skin_consistency_groups_by_subject():
