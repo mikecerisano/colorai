@@ -256,6 +256,7 @@ def store_skin_metrics(
             if skin is None:
                 continue
             b, g, r = skin["mean_bgr"]
+            x, y, w, h = (int(v) for v in face["bbox"])
             row = SkinMetric(
                 shot_id=shot.id,
                 face_index=face_index,
@@ -263,6 +264,10 @@ def store_skin_metrics(
                 mean_g=g / 255.0,
                 mean_r=r / 255.0,
                 sample_pixels=int(skin["sample_pixels"]),
+                bbox_x=x,
+                bbox_y=y,
+                bbox_w=w,
+                bbox_h=h,
             )
             session.add(row)
             rows.append(row)

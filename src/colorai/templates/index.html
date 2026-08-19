@@ -2,289 +2,312 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ColorAI — Review</title>
   <style>
-    body { font-family: -apple-system, "Segoe UI", sans-serif; margin: 1.5rem; background: #111; color: #eee; }
-    h1 { font-size: 1.2rem; margin: 0 0 0.25rem; }
-    h2 { font-size: 1rem; margin: 1.5rem 0 0.5rem; }
-    .muted { color: #999; font-size: 0.85rem; }
-    button { background: #2c2c2e; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 0.15rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
-    button:hover { background: #3a3a3c; }
-    select, input, textarea { background: #1c1c1e; color: #eee; border: 1px solid #444; border-radius: 4px; padding: 0.2rem 0.4rem; font-size: 0.8rem; }
-    .subjects { display: flex; flex-direction: column; gap: 0.6rem; }
-    .subject { background: #1c1c1e; border: 1px solid #333; border-radius: 8px; padding: 0.6rem 0.75rem; }
-    .subject .head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-    .subject .name { font-weight: 600; }
-    .subject .faces { display: flex; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.5rem; }
-    .face { width: 120px; background: #222; border: 1px solid #333; border-radius: 6px; overflow: hidden; }
-    .face img { width: 100%; display: block; background: #000; }
-    .face .fmeta { padding: 0.3rem; font-size: 0.7rem; color: #bbb; }
-    .face.ref { border-color: #5a8f5a; }
-    .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; margin-top: 1rem; }
-    .shot { background: #1c1c1e; border: 1px solid #333; border-radius: 8px; overflow: hidden; }
-    .shot img { width: 100%; display: block; background: #000; }
-    .shot .meta { padding: 0.5rem 0.75rem; font-size: 0.85rem; }
-    .shot .tc { font-family: ui-monospace, monospace; color: #ccc; }
-    .metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.15rem 0.5rem; margin-top: 0.4rem; font-size: 0.75rem; color: #aaa; }
-    .metrics span { display: flex; justify-content: space-between; }
-    .corrections { display: flex; flex-direction: column; gap: 0.2rem; margin: 0.35rem 0; }
-    .corr-row { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; }
-    .corr-row.off { opacity: 0.5; }
-    .track { margin-top: 0.3rem; font-size: 0.72rem; color: #9f9; }
-    .notes { display: flex; flex-direction: column; gap: 0.4rem; }
-    .note { background: #1c1c1e; border: 1px solid #333; border-radius: 6px; padding: 0.5rem 0.7rem; font-size: 0.82rem; }
-    .note .author { color: #9cf; font-size: 0.72rem; }
-    .ref-state { display: inline-block; margin-right: 0.5rem; padding: 0 0.4rem; border-radius: 8px; font-size: 0.72rem; border: 1px solid #555; }
-    .ref-state-suggested { color: #fc9; border-color: #a67c2e; }
-    .ref-state-approved { color: #9f9; border-color: #4a7c4a; }
-    .ref-state-rejected { color: #f99; border-color: #7c4a4a; }
+    :root { --bg:#0e0e10; --panel:#18181b; --panel2:#1f1f23; --line:#2a2a2f; --text:#e8e8ea; --muted:#9a9aa2; --accent:#4a9eff; --green:#4fd07a; --amber:#f0b45c; --red:#f06c6c; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family:-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); font-size:14px; }
+    header { display:flex; align-items:center; gap:1rem; padding:0.6rem 1rem; border-bottom:1px solid var(--line); background:var(--panel); }
+    header h1 { font-size:1rem; margin:0; }
+    .muted { color:var(--muted); font-size:0.8rem; }
+    .layout { display:grid; grid-template-columns:300px 1fr; height:calc(100vh - 49px); }
+    .sidebar { border-right:1px solid var(--line); overflow-y:auto; padding:0.75rem; background:var(--panel); }
+    .main { overflow-y:auto; padding:1rem; }
+    h2 { font-size:0.85rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--muted); margin:1rem 0 0.5rem; }
+    .setup-card { display:block; width:100%; text-align:left; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0.6rem 0.7rem; margin-bottom:0.5rem; cursor:pointer; color:var(--text); }
+    .setup-card:hover, .setup-card.active { border-color:var(--accent); }
+    .setup-card .row { display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; }
+    .setup-card .name { font-weight:600; }
+    .badge { display:inline-block; font-size:0.68rem; padding:0 0.4rem; border-radius:8px; border:1px solid var(--line); color:var(--muted); }
+    .badge.unassigned { color:var(--amber); border-color:#6b5626; }
+    .badge.suggested { color:var(--amber); border-color:#6b5626; }
+    .badge.approved { color:var(--green); border-color:#2c6b3f; }
+    .badge.needs-review { color:var(--amber); border-color:#6b5626; }
+    .badge.intentional { color:var(--accent); border-color:#2b4c73; }
+    button { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:0.2rem 0.55rem; cursor:pointer; font-size:0.78rem; }
+    button:hover { border-color:var(--accent); }
+    select, input, textarea { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:0.2rem 0.4rem; font-size:0.8rem; }
+    .filmstrip { display:flex; gap:0.6rem; overflow-x:auto; padding-bottom:0.5rem; }
+    .shot-thumb { min-width:180px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+    .shot-thumb img { width:100%; display:block; background:#000; }
+    .shot-thumb .meta { padding:0.4rem 0.55rem; font-size:0.72rem; color:var(--muted); }
+    .ref-panel { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0.75rem; margin-top:0.75rem; }
+    .corr-row { display:flex; align-items:center; gap:0.5rem; padding:0.3rem 0; border-bottom:1px solid var(--line); font-size:0.82rem; }
+    .corr-row.off { opacity:0.55; }
+    .faces { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:0.75rem; }
+    .face { background:var(--panel2); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+    .face img { width:100%; display:block; background:#000; aspect-ratio:1; object-fit:cover; }
+    .face .fbody { padding:0.4rem 0.55rem; font-size:0.72rem; }
+    .face .fbody select { width:100%; margin-top:0.3rem; }
+    .face.ref { border-color:var(--green); }
+    .subject { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:0.6rem 0.7rem; margin-bottom:0.75rem; }
+    .subject .head { display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.5rem; }
+    .subject .name { font-weight:600; }
+    .inbox-item { display:flex; align-items:center; gap:0.5rem; padding:0.35rem 0; border-bottom:1px solid var(--line); font-size:0.8rem; }
+    .hidden { display:none; }
+    .tabs { display:flex; gap:0.5rem; margin-bottom:1rem; }
+    .tab { padding:0.3rem 0.8rem; }
+    .tab.active { border-color:var(--accent); color:var(--accent); }
   </style>
 </head>
 <body>
-  <h1>ColorAI Review</h1>
-  <p class="muted">{{ projects }} · {{ shots|length }} shots</p>
+  <header>
+    <h1>ColorAI Review</h1>
+    <span class="muted">{{ projects }}</span>
+    <span class="muted">· {{ ws.setups|length }} setups · {{ ws.subjects|length }} subjects</span>
+  </header>
 
-  <h2>Subjects</h2>
-  <div id="subjects" class="subjects"><span class="muted">Loading…</span></div>
-  <div style="margin-top:0.5rem">
-    <button id="new-subject">+ New subject</button>
-  </div>
-
-  <h2>Shots</h2>
-  {% if not shots %}<p class="muted">No shots yet — run <code>colorai analyze &lt;master&gt;</code> first.</p>{% endif %}
-  <div class="shots">
-  {% for s in shots %}
-    <div class="shot" data-shot="{{ s.id }}">
-      <img src="/shots/{{ s.id }}/preview.png" alt="shot {{ s.index }}" data-preview>
-      <div class="meta">
-        <div class="tc">{{ s.start_tc }} → {{ s.end_tc }}</div>
-        <div class="muted">shot {{ s.index }} · {{ s.frame_count }} frames</div>
-        <div class="controls" data-controls></div>
-        <button class="track-btn" data-shot="{{ s.id }}">Track skin</button>
-        <div class="track" data-track></div>
-        <div class="metrics">
-          <span>Y <b>{{ s.luma_mean }}</b></span>
-          <span>σ <b>{{ s.luma_std }}</b></span>
-          <span>sat <b>{{ s.saturation_mean }}</b></span>
-          <span>R <b>{{ s.r_mean }}</b></span>
-          <span>G <b>{{ s.g_mean }}</b></span>
-          <span>B <b>{{ s.b_mean }}</b></span>
-        </div>
+  <div class="layout">
+    <aside class="sidebar">
+      <h2>Interview setups</h2>
+      <div id="setup-list">
+        {% for setup in ws.setups if setup.parent_id is none %}
+        <button class="setup-card" data-setup="{{ setup.id }}" onclick="selectSetup({{ setup.id }})">
+          <div class="row">
+            <span class="name">{{ setup.name }}</span>
+            {% if setup.kind == "setup" %}<span class="badge">setup</span>{% endif %}
+            {% if setup.camera %}<span class="badge">{{ setup.camera }}</span>{% endif %}
+          </div>
+          <div class="row muted">
+            {{ setup.shot_ids|length }} shots
+            {% if setup.reference_state == "approved" %}<span class="badge approved">approved ref</span>{% elif setup.reference_state == "suggested" %}<span class="badge suggested">suggested ref</span>{% endif %}
+          </div>
+          {% set variants = ws.setups | selectattr('parent_id','equalto',setup.id) | list %}
+          {% if variants %}
+          <div class="row" style="margin-top:0.3rem">
+            {% for v in variants %}<span class="badge">variant: {{ v.name }}</span>{% endfor %}
+          </div>
+          {% endif %}
+        </button>
+        {% endfor %}
+        {% if not (ws.setups | selectattr('parent_id','equalto',none) | list) %}
+        <p class="muted">No setups yet. Create one below or from the inbox.</p>
+        {% endif %}
       </div>
-    </div>
-  {% endfor %}
-  </div>
 
-  <h2>Reference proposals</h2>
-  <div id="references" class="notes">
-  {% if not references %}<span class="muted">No reference proposals yet.</span>{% endif %}
-  {% for r in references %}
-    <div class="note" data-proposal="{{ r.id }}">
-      <span class="ref-state ref-state-{{ r.state }}">{{ r.state }}</span>
-      <span class="muted">shot {{ r.shot_id }}{% if r.subject_id %} · subject {{ r.subject_id }}{% endif %}{% if r.group_id %} · group {{ r.group_id }}{% endif %} · conf {{ r.confidence }}</span>
-      <div>{{ r.reason }}</div>
-      <div class="author">{{ r.author }}</div>
-      {% if r.state == "suggested" %}
-      <button data-approve="{{ r.id }}">Approve</button>
-      <button data-reject="{{ r.id }}">Reject</button>
-      {% endif %}
-    </div>
-  {% endfor %}
-  </div>
+      <h2>New setup</h2>
+      <div class="row" style="display:flex;gap:0.4rem">
+        <input id="new-setup-name" placeholder="Setup name" style="flex:1">
+        <button onclick="createSetup()">Create</button>
+      </div>
 
-  <h2>Notes</h2>
-  <div class="muted" style="margin-bottom:0.4rem">
-    <input id="note-text" placeholder="Add a note…" style="width:60%">
-    <button id="add-note">Add</button>
+      <h2>Unassigned</h2>
+      <div>
+        <span class="badge unassigned">{{ ws.unassigned_faces|length }} faces</span>
+        <span class="badge unassigned">{{ ws.unassigned_shots|length }} shots</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="tabs">
+        <button class="tab active" id="tab-setups" onclick="showTab('setups')">Setups</button>
+        <button class="tab" id="tab-faces" onclick="showTab('faces')">Face review</button>
+        <button class="tab" id="tab-inbox" onclick="showTab('inbox')">Inbox</button>
+      </div>
+
+      <!-- Setups workspace -->
+      <section id="tab-setups-pane">
+        {% if not ws.setups %}
+        <p class="muted">No data yet — run <code>colorai analyze &lt;master&gt;</code> first.</p>
+        {% endif %}
+        {% for setup in ws.setups %}
+        <div class="setup-workspace {% if loop.index0 > 0 %}hidden{% endif %}" data-workspace="{{ setup.id }}">
+          <h2>{{ setup.name }}
+            {% if setup.kind == "setup" %}<span class="badge">setup</span>{% endif %}
+            {% if setup.camera %}<span class="badge">{{ setup.camera }}</span>{% endif %}
+            {% if setup.reference_state == "approved" %}<span class="badge approved">approved reference</span>
+            {% elif setup.reference_state == "suggested" %}<span class="badge suggested">suggested reference</span>
+            {% else %}<span class="badge">no reference</span>{% endif %}
+          </h2>
+          <div class="muted" style="margin-bottom:0.5rem">
+            subjects: {% for sid in setup.subject_ids %}{{ subject_names[sid] }}{% if not loop.last %}, {% endif %}{% endfor %}
+          </div>
+
+          {% set members = ws.shots | selectattr('group_id','equalto',setup.id) | list %}
+          <div class="filmstrip">
+            {% for s in members %}
+            <div class="shot-thumb" data-shot="{{ s.id }}">
+              <img src="/shots/{{ s.id }}/preview.png" alt="shot {{ s.index }}">
+              <div class="meta">
+                shot {{ s.index }} · {{ s.start_tc }}
+                {% if s.excused %}<span class="badge intentional">intentional</span>{% endif %}
+                {% if s.review_status == "pending" and s.corrections %}<span class="badge needs-review">needs review</span>{% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+
+          <!-- reference recommendations -->
+          <div class="ref-panel">
+            <div class="muted" style="margin-bottom:0.4rem">Reference recommendation</div>
+            {% set refs = ws.reference_proposals | selectattr('group_id','equalto',setup.id) | list %}
+            {% if not refs %}<p class="muted">No proposal yet — have the agent propose one, or pick a shot.</p>{% endif %}
+            {% for r in refs %}
+            <div class="corr-row">
+              <span class="badge {{ 'approved' if r.state=='approved' else 'suggested' if r.state=='suggested' else '' }}">{{ r.state }}</span>
+              <span>shot {{ r.shot_id }} · conf {{ r.confidence }}</span>
+              <span class="muted">{{ r.reason }}</span>
+              {% if r.state == "suggested" %}
+              <button onclick="approveRef({{ r.id }})">Approve</button>
+              <button onclick="rejectRef({{ r.id }})">Reject</button>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+
+          <!-- proposed corrections (always disabled until approved) -->
+          <h2>Proposed corrections</h2>
+          {% set with_corrections = members | selectattr('corrections') | list %}
+          {% for s in members if s.corrections %}
+          <div class="ref-panel" style="margin-top:0.4rem">
+            <div class="muted">shot {{ s.index }} · {{ s.start_tc }}</div>
+            {% for c in s.corrections %}
+            <div class="corr-row {{ '' if c.enabled else 'off' }}">
+              <input type="checkbox" {% if c.enabled %}checked{% endif %} disabled>
+              <span>{{ c.kind }}</span>
+              <span class="muted">{{ c.parameters }}</span>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="muted">No corrections proposed in this setup.</p>
+          {% endfor %}
+        </div>
+        {% endfor %}
+      </section>
+
+      <!-- Face review -->
+      <section id="tab-faces-pane" class="hidden">
+        {% if not ws.subjects %}<p class="muted">No subjects yet.</p>{% endif %}
+        {% for s in ws.subjects %}
+        <div class="subject" data-subject="{{ s.id }}">
+          <div class="head">
+            <span class="name">{{ s.name }}</span>
+            {% if s.reference_shot_id %}<span class="badge approved">ref ★</span>{% endif %}
+            <input type="text" id="rename-{{ s.id }}" value="{{ s.name }}" style="width:8rem">
+            <button onclick="renameSubject({{ s.id }})">Rename</button>
+            <select id="merge-into-{{ s.id }}">
+              {% for other in ws.subjects if other.id != s.id %}<option value="{{ other.id }}">{{ other.name }}</option>{% endfor %}
+            </select>
+            <button onclick="mergeSubject({{ s.id }})">Merge into</button>
+            <button onclick="deleteSubject({{ s.id }})">Delete</button>
+          </div>
+          <div class="faces">
+            {% for f in s.faces %}
+            <div class="face {% if f.shot_id == s.reference_shot_id %}ref{% endif %}">
+              <img src="/api/skin_metrics/{{ f.skin_metric_id }}/crop.png" alt="face {{ f.face_index }}">
+              <div class="fbody">
+                <div>shot {{ f.shot_id }} · face {{ f.face_index }} · {{ f.timecode }}</div>
+                <div class="muted">skin {{ f.mean_bgr | join(', ') }}</div>
+                <select class="face-assign" data-skin-metric-id="{{ f.skin_metric_id }}" data-subject-id="{{ s.id }}" onchange="assignFace(this)">
+                  <option value="" {% if f.subject_id is none %}selected{% endif %}>Unassigned</option>
+                  {% for other in ws.subjects %}
+                  <option value="{{ other.id }}" {% if f.subject_id == other.id %}selected{% endif %}>{{ other.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+        <button onclick="newSubject()">+ New subject</button>
+      </section>
+
+      <!-- Inbox -->
+      <section id="tab-inbox-pane" class="hidden">
+        <h2>Unassigned faces</h2>
+        {% if not ws.unassigned_faces %}<p class="muted">None.</p>{% endif %}
+        {% for f in ws.unassigned_faces %}
+        <div class="inbox-item">
+          <img src="/api/skin_metrics/{{ f.skin_metric_id }}/crop.png" style="width:48px;height:48px;object-fit:cover;border-radius:6px">
+          <span>shot {{ f.shot_id }} · face {{ f.face_index }} · {{ f.timecode }}</span>
+          <select class="face-assign" data-skin-metric-id="{{ f.skin_metric_id }}" onchange="assignFace(this)">
+            <option value="" selected>Unassigned</option>
+            {% for other in ws.subjects %}<option value="{{ other.id }}">{{ other.name }}</option>{% endfor %}
+          </select>
+        </div>
+        {% endfor %}
+
+        <h2>Unassigned shots</h2>
+        {% if not ws.unassigned_shots %}<p class="muted">None.</p>{% endif %}
+        {% for s in ws.unassigned_shots %}
+        <div class="inbox-item">
+          <span>shot {{ s.index }} · {{ s.start_tc }} → {{ s.end_tc }}</span>
+          <select id="add-shot-{{ s.id }}">
+            <option value="">Add to setup…</option>
+            {% for g in ws.setups %}<option value="{{ g.id }}">{{ g.name }}{% if g.camera %} ({{ g.camera }}){% endif %}</option>{% endfor %}
+          </select>
+          <button onclick="addShotToSetup({{ s.id }})">Assign</button>
+        </div>
+        {% endfor %}
+      </section>
+    </main>
   </div>
-  <div id="notes" class="notes"><span class="muted">Loading…</span></div>
 
   <script>
     const ASSET_ID = {{ asset_id if asset_id is not none else "null" }};
 
-    // --- subjects -----------------------------------------------------------
-    async function refreshSubjects() {
-      const box = document.getElementById('subjects');
-      if (ASSET_ID === null) { box.innerHTML = '<span class="muted">No asset</span>'; return; }
-      const res = await fetch(`/api/assets/${ASSET_ID}/subjects`);
-      const subjects = await res.json();
-      if (!subjects.length) { box.innerHTML = '<span class="muted">No subjects yet</span>'; return; }
-
-      box.innerHTML = '';
-      for (const s of subjects) {
-        const el = document.createElement('div');
-        el.className = 'subject';
-
-        const head = document.createElement('div');
-        head.className = 'head';
-        const name = document.createElement('span');
-        name.className = 'name';
-        name.textContent = s.name + (s.reference_shot_id ? ' ★' : '');
-        head.appendChild(name);
-
-        const rename = document.createElement('button');
-        rename.textContent = 'Rename';
-        rename.onclick = async () => {
-          const n = prompt('Subject name', s.name);
-          if (n) { await fetch(`/api/subjects/${s.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n}) }); refreshSubjects(); }
-        };
-        head.appendChild(rename);
-
-        const mergeSel = document.createElement('select');
-        for (const other of subjects) if (other.id !== s.id) {
-          const o = document.createElement('option'); o.value = other.id; o.textContent = other.name; mergeSel.appendChild(o);
-        }
-        head.appendChild(mergeSel);
-        const merge = document.createElement('button');
-        merge.textContent = 'Merge into';
-        merge.onclick = async () => {
-          await fetch('/api/subjects/merge', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({keep_id: mergeSel.value, drop_id: s.id}) });
-          refreshSubjects();
-        };
-        head.appendChild(merge);
-
-        const del = document.createElement('button');
-        del.textContent = 'Delete';
-        del.onclick = async () => {
-          await fetch(`/api/subjects/${s.id}`, { method:'DELETE' });
-          refreshSubjects();
-        };
-        head.appendChild(del);
-
-        el.appendChild(head);
-
-        const faces = document.createElement('div');
-        faces.className = 'faces';
-        for (const f of s.faces) {
-          const card = document.createElement('div');
-          card.className = 'face' + (f.shot_id === s.reference_shot_id ? ' ref' : '');
-          const img = document.createElement('img');
-          img.src = `/shots/${f.shot_id}/preview.png`;
-          card.appendChild(img);
-          const meta = document.createElement('div');
-          meta.className = 'fmeta';
-          meta.textContent = `${f.timecode} · face ${f.face_index} · ${f.mean_bgr.map(v => Math.round(v*255)).join(',')}`;
-          card.appendChild(meta);
-
-          const ref = document.createElement('button');
-          ref.textContent = 'Set ref';
-          ref.onclick = async () => {
-            await fetch(`/api/subjects/${s.id}/reference`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({shot_id: f.shot_id}) });
-            refreshSubjects();
-          };
-          card.appendChild(ref);
-
-          const move = document.createElement('select');
-          const un = document.createElement('option'); un.value = ''; un.textContent = 'unassign'; move.appendChild(un);
-          for (const other of subjects) if (other.id !== s.id) {
-            const o = document.createElement('option'); o.value = other.id; o.textContent = other.name; move.appendChild(o);
-          }
-          move.onchange = async () => {
-            await fetch(`/api/skin_metrics/${f.skin_metric_id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({subject_id: move.value ? Number(move.value) : null}) });
-            refreshSubjects();
-          };
-          card.appendChild(move);
-
-          faces.appendChild(card);
-        }
-        el.appendChild(faces);
-        box.appendChild(el);
-      }
+    async function post(url, body) {
+      await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{}) });
+      location.reload();
     }
 
-    document.getElementById('new-subject').onclick = async () => {
+    function showTab(name) {
+      ['setups','faces','inbox'].forEach(t => {
+        document.getElementById('tab-'+t+'-pane').classList.toggle('hidden', t !== name);
+        document.getElementById('tab-'+t).classList.toggle('active', t === name);
+      });
+    }
+
+    function selectSetup(id) {
+      document.querySelectorAll('.setup-card').forEach(c => c.classList.toggle('active', Number(c.dataset.setup) === id));
+      document.querySelectorAll('.setup-workspace').forEach(w => w.classList.toggle('hidden', Number(w.dataset.workspace) !== id));
+      showTab('setups');
+    }
+
+    async function assignFace(sel) {
+      const subjectId = sel.value ? Number(sel.value) : null;
+      await fetch(`/api/skin_metrics/${sel.dataset.skinMetricId}`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({subject_id: subjectId})
+      });
+      location.reload();
+    }
+
+    async function renameSubject(id) {
+      const name = document.getElementById('rename-'+id).value;
+      await fetch(`/api/subjects/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name}) });
+      location.reload();
+    }
+    async function mergeSubject(dropId) {
+      const keepId = Number(document.getElementById('merge-into-'+dropId).value);
+      await post('/api/subjects/merge', {keep_id: keepId, drop_id: dropId});
+    }
+    async function deleteSubject(id) {
+      await fetch(`/api/subjects/${id}`, { method:'DELETE' });
+      location.reload();
+    }
+    async function newSubject() {
       const n = prompt('New subject name');
-      if (n && ASSET_ID !== null) {
-        await fetch(`/api/assets/${ASSET_ID}/subjects`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:n}) });
-        refreshSubjects();
-      }
-    };
-
-    // --- notes --------------------------------------------------------------
-    async function refreshNotes() {
-      const box = document.getElementById('notes');
-      if (ASSET_ID === null) { box.innerHTML = '<span class="muted">No asset</span>'; return; }
-      const res = await fetch(`/api/assets/${ASSET_ID}/notes`);
-      const notes = await res.json();
-      box.innerHTML = notes.length ? '' : '<span class="muted">No notes yet</span>';
-      for (const n of notes) {
-        const el = document.createElement('div');
-        el.className = 'note';
-        const a = document.createElement('div'); a.className = 'author'; a.textContent = n.author;
-        el.appendChild(a);
-        el.appendChild(document.createTextNode(n.text));
-        box.appendChild(el);
-      }
+      if (n && ASSET_ID !== null) await post(`/api/assets/${ASSET_ID}/subjects`, {name:n});
     }
 
-    document.getElementById('add-note').onclick = async () => {
-      const text = document.getElementById('note-text').value;
-      if (text && ASSET_ID !== null) {
-        await fetch(`/api/assets/${ASSET_ID}/notes`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text, author:'human'}) });
-        document.getElementById('note-text').value = '';
-        refreshNotes();
-      }
-    };
-
-    // --- tracking -----------------------------------------------------------
-    document.querySelectorAll('.track-btn').forEach(btn => {
-      btn.onclick = async () => {
-        const id = btn.dataset.shot;
-        const out = document.querySelector(`.shot[data-shot="${id}"] [data-track]`);
-        out.textContent = 'tracking…';
-        const res = await fetch(`/api/shots/${id}/track`);
-        const r = await res.json();
-        out.textContent = r.error || `skin ${r.median_bgr ? r.median_bgr.map(v=>Math.round(v)).join(',') : '—'} · stability ${r.stability ?? '—'} · ${r.tracked_frames} frames`;
-      };
-    });
-
-    // --- corrections (existing) ---------------------------------------------
-    function bump(card) { const img = card.querySelector('[data-preview]'); img.src = img.src.split('?')[0] + '?t=' + Date.now(); }
-    async function refreshShot(shotId) {
-      const res = await fetch(`/api/shots/${shotId}`);
-      const shot = await res.json();
-      const card = document.querySelector(`.shot[data-shot="${shotId}"]`);
-      const controls = card.querySelector('[data-controls]');
-      controls.innerHTML = '';
-      const list = document.createElement('div'); list.className = 'corrections';
-      for (const c of shot.corrections) {
-        const row = document.createElement('div'); row.className = 'corr-row' + (c.enabled ? '' : ' off');
-        const label = document.createElement('label');
-        const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = c.enabled;
-        cb.onchange = async () => {
-          await fetch(`/api/corrections/${c.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled: cb.checked}) });
-          bump(card);
-        };
-        label.appendChild(cb); label.appendChild(document.createTextNode(c.kind));
-        row.appendChild(label);
-        const del = document.createElement('button'); del.textContent = '×';
-        del.onclick = async () => { await fetch(`/api/corrections/${c.id}`, { method:'DELETE' }); refreshShot(shotId); };
-        row.appendChild(del);
-        list.appendChild(row);
-      }
-      controls.appendChild(list);
-      const propose = document.createElement('button'); propose.textContent = 'Propose';
-      propose.onclick = async () => { await fetch(`/api/shots/${shotId}/propose`, { method:'POST' }); refreshShot(shotId); };
-      controls.appendChild(propose);
+    async function createSetup() {
+      const name = document.getElementById('new-setup-name').value;
+      if (name && ASSET_ID !== null) await post(`/api/assets/${ASSET_ID}/groups`, {name, kind:'setup'});
+    }
+    async function addShotToSetup(shotId) {
+      const gid = document.getElementById('add-shot-'+shotId).value;
+      if (gid) await fetch(`/api/shots/${shotId}/group`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({group_id: Number(gid)}) }).then(()=>location.reload());
     }
 
-    document.querySelectorAll('.shot').forEach(card => refreshShot(card.dataset.shot));
-    refreshSubjects();
-    refreshNotes();
+    async function approveRef(id) { await post(`/api/reference-proposals/${id}/approve`); }
+    async function rejectRef(id) { await post(`/api/reference-proposals/${id}/reject`); }
 
-    // --- reference proposals ------------------------------------------------
-    document.querySelectorAll('[data-approve]').forEach(btn => {
-      btn.onclick = async () => {
-        await fetch(`/api/reference-proposals/${btn.dataset.approve}/approve`, { method:'POST' });
-        location.reload();
-      };
-    });
-    document.querySelectorAll('[data-reject]').forEach(btn => {
-      btn.onclick = async () => {
-        await fetch(`/api/reference-proposals/${btn.dataset.reject}/reject`, { method:'POST' });
-        location.reload();
-      };
-    });
+    // Open the first setup by default.
+    document.querySelectorAll('.setup-card').forEach((c,i) => { if (i===0) selectSetup(Number(c.dataset.setup)); });
   </script>
 </body>
 </html>

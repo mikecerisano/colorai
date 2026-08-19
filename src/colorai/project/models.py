@@ -310,6 +310,12 @@ class SkinMetric(Base):
     mean_g: Mapped[float] = mapped_column(Float, nullable=False)
     mean_r: Mapped[float] = mapped_column(Float, nullable=False)
     sample_pixels: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Detected face box in the representative still (pixels, ``(x, y, w, h)``),
+    # so the review UI can render a crop/overlay for multi-person frames.
+    bbox_x: Mapped[int | None] = mapped_column(Integer)
+    bbox_y: Mapped[int | None] = mapped_column(Integer)
+    bbox_w: Mapped[int | None] = mapped_column(Integer)
+    bbox_h: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     shot: Mapped[Shot] = relationship()

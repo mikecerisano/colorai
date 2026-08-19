@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 344 tests passing.
+Current progress. 354 tests passing.
 
 ## Done
 
@@ -113,6 +113,16 @@ Current progress. 344 tests passing.
   differences are treated as expected — ``cross_variant_skin_consistency``
   checks only face/skin consistency and proposes a skin-only ``rgb_balance``
   when a variant genuinely drifts.
+- **Review UI (setup-first)** — the review screen is organized around
+  *interview setups* (sidebar cards) rather than a flat subject/face dump: each
+  setup shows its subject(s), camera label, lighting variants, member-shot
+  count, and reference/review state, and opens a focused workspace (member
+  filmstrip, reference recommendation with Approve/Reject, and proposed
+  corrections shown disabled until approved). Face review renders a **crop**
+  per detected face (bounding boxes persisted on `SkinMetric`) with the current
+  subject selected and "Unassigned" as a real option; an inbox surfaces
+  unassigned faces/shots. Subjects can be renamed/merged/deleted from that
+  view.
 - **Temporal QC** — `qc.py` detects frame-to-frame flicker, per-shot clipped
   highlights / crushed blacks (from stored luma percentiles), and blank /
   duplicate damaged-frame signatures; exposed via MCP. Reports carry
@@ -149,11 +159,12 @@ Current progress. 344 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 344 tests across timecode, project model, migrations (incl. legacy
+- 354 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
   auto-assignment), correction, LUT/curve, render, resumability, editorial,
-  references, matching (incl. variants), analysis, face, skin, skin analysis,
-  tracking, anomaly, QC, generative, restoration, MCP, UI, and CLI.
+  references, matching (incl. variants), analysis, face (incl. bbox), skin,
+  skin analysis, tracking, anomaly, QC, generative, restoration, MCP, UI,
+  and CLI.
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45
   shots, three skin subjects separated, and per-subject skin drift flagged
   with proposed corrections.

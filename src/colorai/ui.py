@@ -35,7 +35,10 @@ from colorai.project.models import (
     MediaAsset,
     Note,
     Project,
+    ReferenceProposal,
+    RepresentativeFrame,
     Shot,
+    ShotGroup,
     SkinMetric,
     Subject,
 )
@@ -46,6 +49,138 @@ _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 def _fmt(value: float | None) -> str:
     return "—" if value is None else f"{value:.3f}"
+
+
+def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
+    """Structured data for the review UI: setups, faces, inbox, references."""
+    with store.session() as session:
+        subjects = (
+            session.query(Subject).filter_by(asset_id=asset_id).order_by(Subject.id).all()
+        )
+        groups = (
+            session.query(ShotGroup).filter_by(asset_id=asset_id).order_by(ShotGroup.id).all()
+        )
+        shots = (
+            session.query(Shot).filter_by(asset_id=asset_id).order_by(Shot.index).all()
+        )
+        proposals = (
+            session.query(ReferenceProposal).filter_by(asset_id=asset_id)
+            .order_by(ReferenceProposal.id).all()
+        )
+        face_rows = (
+            session.query(SkinMetric)
+            .join(Shot, SkinMetric.shot_id == Shot.id)
+            .filter(Shot.asset_id == asset_id)
+            .order_by(Shot.index, SkinMetric.face_index)
+            .all()
+        )
+        metric_rows = (
+            session.query(FrameMetrics)
+            .join(Shot, FrameMetrics.shot_id == Shot.id)
+            .filter(Shot.asset_id == asset_id).all()
+        )
+        correction_rows = (
+            session.query(Correction)
+            .join(Shot, Correction.shot_id == Shot.id)
+            .filter(Shot.asset_id == asset_id).order_by(Correction.id).all()
+        )
+
+        timecodes = {s.id: s.start_timecode for s in shots}
+        metrics_by_shot = {m.shot_id: m for m in metric_rows}
+        corrections_by_shot: dict[int, list[dict]] = {}
+        for c in correction_rows:
+            corrections_by_shot.setdefault(c.shot_id, []).append(
+                {"id": c.id, "kind": c.kind, "parameters": c.parameters, "enabled": c.enabled}
+            )
+
+        def face_brief(m: SkinMetric) -> dict:
+            return {
+                "skin_metric_id": m.id,
+                "shot_id": m.shot_id,
+                "face_index": m.face_index,
+                "subject_id": m.subject_id,
+                "timecode": timecodes.get(m.shot_id),
+                "mean_bgr": [round(m.mean_b, 3), round(m.mean_g, 3), round(m.mean_r, 3)],
+                "bbox": [m.bbox_x, m.bbox_y, m.bbox_w, m.bbox_h],
+            }
+
+        def shot_brief(s: Shot) -> dict:
+            m = metrics_by_shot.get(s.id)
+            return {
+                "id": s.id,
+                "index": s.index,
+                "start_tc": s.start_timecode,
+                "end_tc": s.end_timecode,
+                "group_id": s.group_id,
+                "review_status": s.review_status,
+                "excused": s.excused,
+                "luma_mean": m.luma_mean if m else None,
+                "saturation_mean": m.saturation_mean if m else None,
+                "corrections": corrections_by_shot.get(s.id, []),
+            }
+
+        proposal_state: dict[int, str] = {}
+        proposal_ref: dict[int, int] = {}
+        for p in proposals:
+            if p.group_id is not None:
+                if p.state == "approved":
+                    proposal_state[p.group_id] = "approved"
+                    proposal_ref[p.group_id] = p.shot_id
+                elif proposal_state.get(p.group_id) != "approved" and p.state == "suggested":
+                    proposal_state[p.group_id] = "suggested"
+
+        return {
+            "asset_id": asset_id,
+            "subjects": [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "reference_shot_id": s.reference_shot_id,
+                    "faces": [face_brief(m) for m in face_rows if m.subject_id == s.id],
+                }
+                for s in subjects
+            ],
+            "setups": [
+                {
+                    "id": g.id,
+                    "name": g.name,
+                    "kind": g.kind,
+                    "camera": g.camera,
+                    "parent_id": g.parent_id,
+                    "shot_ids": [s.id for s in shots if s.group_id == g.id],
+                    "subject_ids": sorted(
+                        {
+                            m.subject_id
+                            for m in face_rows
+                            if m.subject_id is not None and m.shot_id in (s.id for s in shots if s.group_id == g.id)
+                        }
+                    ),
+                    "reference_state": proposal_state.get(g.id, "none"),
+                    "approved_reference_shot_id": proposal_ref.get(g.id),
+                }
+                for g in groups
+            ],
+            "unassigned_faces": [
+                face_brief(m) for m in face_rows if m.subject_id is None
+            ],
+            "unassigned_shots": [
+                shot_brief(s) for s in shots if s.group_id is None
+            ],
+            "shots": [shot_brief(s) for s in shots],
+            "reference_proposals": [
+                {
+                    "id": p.id,
+                    "subject_id": p.subject_id,
+                    "group_id": p.group_id,
+                    "shot_id": p.shot_id,
+                    "author": p.author,
+                    "reason": p.reason,
+                    "confidence": p.confidence,
+                    "state": p.state,
+                }
+                for p in proposals
+            ],
+        }
 
 
 def _correction_dict(c: Correction) -> dict[str, Any]:
@@ -114,6 +249,19 @@ class GroupIn(BaseModel):
     name: str
 
 
+class GroupCreate(BaseModel):
+    name: str
+    kind: str = "generic"
+    camera: str | None = None
+    parent_id: int | None = None
+
+
+class GroupUpdate(BaseModel):
+    name: str | None = None
+    camera: str | None = None
+    kind: str | None = None
+
+
 class GroupAssign(BaseModel):
     group_id: int
 
@@ -157,7 +305,6 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
 
     @app.get("/")
     def index(request: Request):
-        shots_view: list[dict] = []
         project_names: list[str] = []
         asset_id: int | None = None
         with store.session() as session:
@@ -165,69 +312,17 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             first_asset = session.query(MediaAsset).order_by(MediaAsset.id).first()
             if first_asset is not None:
                 asset_id = first_asset.id
-            reference_view: list[dict] = []
-            if asset_id is not None:
-                from colorai.project.models import ReferenceProposal
 
-                reference_view = [
-                    {
-                        "id": p.id,
-                        "shot_id": p.shot_id,
-                        "subject_id": p.subject_id,
-                        "group_id": p.group_id,
-                        "author": p.author,
-                        "reason": p.reason,
-                        "confidence": round(p.confidence, 2),
-                        "state": p.state,
-                    }
-                    for p in session.query(ReferenceProposal)
-                    .filter_by(asset_id=asset_id)
-                    .order_by(ReferenceProposal.id)
-                    .all()
-                ]
-            corrections_by_shot: dict[int, list[Correction]] = {}
-            for c in session.query(Correction).order_by(Correction.id).all():
-                corrections_by_shot.setdefault(c.shot_id, []).append(c)
-
-            for shot in session.query(Shot).order_by(Shot.asset_id, Shot.index).all():
-                rf = shot.representative_frame
-                if rf is None:
-                    continue
-                metrics = (
-                    session.query(FrameMetrics)
-                    .filter_by(shot_id=shot.id, frame_index=rf.frame_index)
-                    .first()
-                )
-                still_url = "/stills/" + Path(rf.image_path).resolve().relative_to(stills).as_posix()
-                corrections = corrections_by_shot.get(shot.id, [])
-                shots_view.append(
-                    {
-                        "id": shot.id,
-                        "index": shot.index,
-                        "start_tc": shot.start_timecode,
-                        "end_tc": shot.end_timecode,
-                        "frame_count": shot.frame_count,
-                        "still_url": still_url,
-                        "corrections": [
-                            {"kind": c.kind, "enabled": c.enabled} for c in corrections
-                        ],
-                        "has_corrections": any(c.enabled for c in corrections),
-                        "luma_mean": _fmt(metrics.luma_mean if metrics else None),
-                        "luma_std": _fmt(metrics.luma_std if metrics else None),
-                        "r_mean": _fmt(metrics.r_mean if metrics else None),
-                        "g_mean": _fmt(metrics.g_mean if metrics else None),
-                        "b_mean": _fmt(metrics.b_mean if metrics else None),
-                        "saturation_mean": _fmt(metrics.saturation_mean if metrics else None),
-                    }
-                )
+        workspace = _workspace(store, asset_id) if asset_id is not None else {}
+        subject_names = {s["id"]: s["name"] for s in workspace.get("subjects", [])}
         return templates.TemplateResponse(
             request,
             "index.html",
             {
                 "projects": ", ".join(project_names) or "(none)",
-                "shots": shots_view,
                 "asset_id": asset_id,
-                "references": reference_view,
+                "ws": workspace,
+                "subject_names": subject_names,
             },
         )
 
@@ -300,7 +395,6 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
     @app.get("/api/assets/{asset_id}/groups")
     def list_groups_endpoint(asset_id: int):
         from colorai.editorial import list_groups as _list
-        from colorai.project.models import ShotGroup
 
         with store.session() as session:
             if session.get(MediaAsset, asset_id) is None:
@@ -310,6 +404,9 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
                 {
                     "id": g.id,
                     "name": g.name,
+                    "kind": g.kind,
+                    "camera": g.camera,
+                    "parent_id": g.parent_id,
                     "shot_ids": [
                         s.id for s in session.query(Shot).filter_by(group_id=g.id).order_by(Shot.index).all()
                     ],
@@ -318,23 +415,39 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             ]
 
     @app.post("/api/assets/{asset_id}/groups", status_code=201)
-    def create_group_endpoint(asset_id: int, payload: GroupIn):
+    def create_group_endpoint(asset_id: int, payload: GroupCreate):
         from colorai.editorial import create_group as _create
 
         try:
-            group = _create(store, asset_id, payload.name)
+            group = _create(
+                store, asset_id, payload.name,
+                kind=payload.kind, camera=payload.camera, parent_id=payload.parent_id,
+            )
         except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return {"id": group.id, "name": group.name, "shot_ids": []}
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "id": group.id,
+            "name": group.name,
+            "kind": group.kind,
+            "camera": group.camera,
+            "parent_id": group.parent_id,
+            "shot_ids": [],
+        }
 
     @app.patch("/api/groups/{group_id}")
-    def rename_group_endpoint(group_id: int, payload: GroupIn):
-        from colorai.editorial import rename_group as _rename
+    def rename_group_endpoint(group_id: int, payload: GroupUpdate):
+        from colorai.editorial import update_group as _update
 
-        group = _rename(store, group_id, payload.name)
+        try:
+            group = _update(
+                store, group_id,
+                name=payload.name, camera=payload.camera, kind=payload.kind,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         if group is None:
             raise HTTPException(status_code=404, detail="group not found")
-        return {"id": group.id, "name": group.name}
+        return {"id": group.id, "name": group.name, "kind": group.kind, "camera": group.camera, "parent_id": group.parent_id}
 
     @app.delete("/api/groups/{group_id}", status_code=204)
     def delete_group_endpoint(group_id: int):
@@ -531,6 +644,7 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
                     "face_index": m.face_index,
                     "timecode": timecodes.get(m.shot_id),
                     "mean_bgr": [round(m.mean_b, 3), round(m.mean_g, 3), round(m.mean_r, 3)],
+                    "bbox": [m.bbox_x, m.bbox_y, m.bbox_w, m.bbox_h],
                 }
                 for m in faces
             ],
@@ -683,5 +797,42 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
         if not ok:
             raise HTTPException(status_code=500, detail="failed to encode preview")
         return Response(content=encoded.tobytes(), media_type="image/png")
+
+    # -- face crop + workspace ----------------------------------------------
+
+    @app.get("/api/skin_metrics/{skin_metric_id}/crop.png")
+    def face_crop(skin_metric_id: int):
+        with store.session() as session:
+            m = session.get(SkinMetric, skin_metric_id)
+            if m is None:
+                raise HTTPException(status_code=404, detail="face not found")
+            rf = session.query(RepresentativeFrame).filter_by(shot_id=m.shot_id).first()
+            if rf is None or not rf.image_path:
+                raise HTTPException(status_code=404, detail="no still for this face")
+            still_path = rf.image_path
+            bbox = (m.bbox_x, m.bbox_y, m.bbox_w, m.bbox_h)
+
+        image = cv2.imread(still_path, cv2.IMREAD_COLOR)
+        if image is None:
+            raise HTTPException(status_code=500, detail="cannot read still")
+        h, w = image.shape[:2]
+        if all(v is not None for v in bbox):
+            x, y, bw, bh = bbox
+            pad = int(max(bw, bh) * 0.35)
+            x0, y0 = max(0, x - pad), max(0, y - pad)
+            x1, y1 = min(w, x + bw + pad), min(h, y + bh + pad)
+            if x1 > x0 and y1 > y0:
+                image = image[y0:y1, x0:x1]
+        ok, encoded = cv2.imencode(".png", image)
+        if not ok:
+            raise HTTPException(status_code=500, detail="failed to encode crop")
+        return Response(content=encoded.tobytes(), media_type="image/png")
+
+    @app.get("/api/assets/{asset_id}/workspace")
+    def asset_workspace(asset_id: int):
+        with store.session() as session:
+            if session.get(MediaAsset, asset_id) is None:
+                raise HTTPException(status_code=404, detail="asset not found")
+        return _workspace(store, asset_id)
 
     return app
