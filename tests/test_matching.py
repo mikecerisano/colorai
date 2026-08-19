@@ -89,9 +89,8 @@ def test_matching_after_human_sets_hero_shot():
     for p in proposals:
         assert p.reference_shot_id == shots[0].id
         assert p.subject_id == alice.id
-        kinds = {c.kind for c in p.corrections}
-        assert "rgb_balance" in kinds  # skin fix within the subject
-        assert "exposure" in kinds    # luma fix vs the reference
+        assert "exposure" in {c.kind for c in p.corrections}  # whole-frame vs reference
+        assert "rgb_balance" in {c.kind for c in p.skin_corrections}  # face-derived
 
 
 def test_group_scope_restricts_members():
@@ -122,10 +121,10 @@ def test_skin_never_compared_across_subjects():
     set_reference(store, alice.id, shots[0].id)
     proposals, _ = match_subject_in_group(store, asset.id, subject_id=alice.id)
     # Bob's very different skin in shot 2 must not influence Alice's shot-2
-    # proposal: the skin correction comes from Alice's own faces only.
+    # proposal: skin proposals come from Alice's own faces only.
     for p in proposals:
-        for c in p.corrections:
-            assert c.kind != "rgb_balance" or "skin" in p.reasons
+        assert all(c.kind == "rgb_balance" for c in p.skin_corrections)
+        assert all(c.kind != "rgb_balance" for c in p.corrections)  # no whole-frame balance here
 
 
 def test_persist_writes_disabled_corrections():
@@ -140,5 +139,44 @@ def test_persist_writes_disabled_corrections():
             .filter(Correction.shot_id.in_([p.shot_id for p in proposals]))
             .all()
         )
+    # Only whole-frame corrections are persisted (never face-derived ones).
     assert len(rows) == sum(len(p.corrections) for p in proposals)
     assert all(not c.enabled for c in rows)  # never auto-applied
+
+
+def test_skin_corrections_are_report_only(tmp_path):
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("skin report")
+    asset = store.add_asset(project.id, source_path="/media/m.mov", frame_rate=25.0)
+    shots = make_shots(asset, [(0, 24), (25, 49)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        for s in shots:
+            session.refresh(s)
+    alice = create_subject(store, asset.id, "Alice")
+    with store.session() as session:
+        # Identical whole-frame metrics on both shots; only the skin differs.
+        for shot in shots:
+            session.add(
+                FrameMetrics(
+                    shot_id=shot.id, frame_index=shot.start_frame,
+                    luma_mean=0.5, luma_std=0.1, r_mean=0.5, g_mean=0.5, b_mean=0.5,
+                    saturation_mean=0.1,
+                )
+            )
+        session.add(SkinMetric(shot_id=shots[0].id, face_index=0, mean_b=0.35, mean_g=0.38, mean_r=0.58, sample_pixels=100, subject_id=alice.id))
+        session.add(SkinMetric(shot_id=shots[1].id, face_index=0, mean_b=0.35, mean_g=0.38, mean_r=0.29, sample_pixels=100, subject_id=alice.id))
+        session.commit()
+
+    set_reference(store, alice.id, shots[0].id)
+    proposals, error = match_subject_in_group(store, asset.id, subject_id=alice.id, persist=True)
+    assert error is None
+    assert len(proposals) == 1
+    p = proposals[0]
+    assert p.skin_corrections and not p.corrections  # skin-only deviation
+
+    # Even with persist=True, face-derived proposals are not written as rows.
+    with store.session() as session:
+        rows = session.query(Correction).filter_by(shot_id=p.shot_id).all()
+    assert rows == []

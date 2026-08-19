@@ -703,8 +703,11 @@ def match_subject_setup(
 
     Scope is ``subject × setup group`` (optionally the group's camera label).
     Requires an approved reference; returns an explanatory error otherwise.
-    Proposals are deterministic, include reference + group context, and are
-    persisted **disabled** (never auto-applied) when ``persist=True``.
+    Whole-frame proposals are deterministic, include reference + group context,
+    and are persisted **disabled** (never auto-applied) when ``persist=True``.
+    Face-derived ``skin_corrections`` are **report-only** — they need a
+    tracked, feathered face mask before they can be applied, and are never
+    persisted as whole-frame grades.
     """
     from colorai.matching import match_subject_in_group
 
@@ -726,6 +729,9 @@ def match_subject_setup(
                 "corrections": [
                     {"kind": c.kind, "parameters": c.parameters} for c in p.corrections
                 ],
+                "skin_corrections": [
+                    {"kind": c.kind, "parameters": c.parameters} for c in p.skin_corrections
+                ],
             }
             for p in proposals
         ],
@@ -740,7 +746,8 @@ def cross_variant_skin_consistency(
 
     Whole-frame cross-variant differences (window light, background) are
     expected and not corrected; only face/skin consistency is reported, with a
-    skin-only ``rgb_balance`` proposal when a variant genuinely drifts.
+    face-region ``rgb_balance`` proposal (report-only — never persisted as a
+    whole-frame grade) when a variant genuinely drifts.
     """
     from colorai.matching import cross_variant_skin_consistency as _check
 

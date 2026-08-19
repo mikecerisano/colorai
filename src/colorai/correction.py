@@ -10,10 +10,16 @@ Image convention: HxWx3 **RGB** order, values in ``[0, 1]`` (float) or
 uint8 out, float in -> float out).
 
 **Working space:** grading operations (everything except ``hue_rotate``) are
-applied in *linear* BT.709 light, so parameters are physically meaningful —
-``exposure`` gain 2 is one stop, ``offset`` is a scene-linear lift, and ASC CDL
-slope/offset/power are linear. ``hue_rotate`` is a display-referred perceptual
-op and stays in gamma space.
+applied in *linear* light, so parameters are physically meaningful —
+``exposure`` gain 2 is one stop, ``offset`` is a linear lift, and ASC CDL
+slope/offset/power are linear. Baked masters are **display-referred**: they are
+decoded with the sRGB/BT.1886 display EOTF and re-encoded with its inverse
+(``color.srgb_eotf``/``srgb_oetf``). The **BT.709 camera OETF** pair
+(``color.bt709_oetf``/``bt709_oetf_inverse``) is a *different* curve provided
+for scene-linear interchange — at code value 0.5 the display EOTF gives ~0.214
+linear while the camera OETF inverse gives ~0.260; conflating them is a 17%+
+error. ``hue_rotate`` is a display-referred perceptual op and stays in gamma
+space.
 
 Supported kinds (see :func:`validate_correction` for parameter shapes):
 
@@ -193,82 +199,101 @@ def _validate_curve_points(points: Any) -> tuple[np.ndarray, np.ndarray]:
     return xs, ys
 
 
-def apply_correction(image_rgb: np.ndarray, kind: str, parameters: dict[str, Any]) -> np.ndarray:
-    """Apply one deterministic correction to an RGB image array."""
-    validate_correction(kind, parameters)
-    f, was_uint8 = _to_float_rgb(image_rgb)
+def _is_gamma_kind(kind: str, parameters: dict[str, Any]) -> bool:
+    """True when ``kind`` operates on display-referred (gamma) values."""
+    return kind == "hue_rotate" or (
+        kind == "lut" and parameters.get("space", "linear") == "display"
+    )
 
+
+def _apply_gamma(f: np.ndarray, kind: str, parameters: dict[str, Any]) -> np.ndarray:
+    """Apply a display-referred (gamma-space) op to float values in [0, 1]."""
     if kind == "hue_rotate":
-        # Perceptual op: rotate hue on display-referred (gamma) values.
         degrees = float(parameters.get("degrees", 0.0))
         u8 = (np.clip(f, 0.0, 1.0) * 255.0).round().astype(np.uint8)
         hsv = cv2.cvtColor(u8, cv2.COLOR_RGB2HSV)
         hsv[..., 0] = (hsv[..., 0].astype(np.int32) + int(round(degrees / 2.0))) % 180
-        out = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB).astype(np.float64) / 255.0
-        return _finish(out, was_uint8)
+        return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB).astype(np.float64) / 255.0
 
-    if kind == "lut" and parameters.get("space", "linear") == "display":
+    if kind == "lut":  # space == "display"
         # Display-referred LUT (authored in gamma space — the usual Resolve
         # Rec.709 .cube): apply on the gamma-encoded values, not linear light.
         from colorai.lutcube import apply_cube, load_cube
 
-        out = apply_cube(load_cube(parameters["path"]), f)
-        return _finish(out, was_uint8)
+        return apply_cube(load_cube(parameters["path"]), f)
 
-    # Grade in linear (scene-referred) light.
-    lin = bt709_to_linear(f)
+    raise ValueError(f"{kind!r} is not a gamma-space op")  # pragma: no cover
 
+
+def _apply_linear(lin: np.ndarray, kind: str, parameters: dict[str, Any]) -> np.ndarray:
+    """Apply a scene-linear grading op to float linear-light values."""
     if kind == "cdl":
         slope = _as_vec3(parameters.get("slope"), (1.0, 1.0, 1.0))
         offset = _as_vec3(parameters.get("offset"), (0.0, 0.0, 0.0))
         power = _as_vec3(parameters.get("power"), (1.0, 1.0, 1.0))
-        lin = np.power(np.clip(lin * slope + offset, 0.0, None), 1.0 / power)
-    elif kind == "exposure":
-        lin = lin * float(parameters.get("gain", 1.0))
-    elif kind == "offset":
-        lin = lin + float(parameters.get("value", 0.0))
-    elif kind == "rgb_balance":
+        return np.power(np.clip(lin * slope + offset, 0.0, None), 1.0 / power)
+    if kind == "exposure":
+        return lin * float(parameters.get("gain", 1.0))
+    if kind == "offset":
+        return lin + float(parameters.get("value", 0.0))
+    if kind == "rgb_balance":
         gain = _as_vec3(parameters.get("gain"), (1.0, 1.0, 1.0))
-        lin = lin * gain
-    elif kind == "contrast":
+        return lin * gain
+    if kind == "contrast":
         amount = float(parameters.get("amount", 1.0))
         pivot = float(parameters.get("pivot", 0.5))
-        lin = (lin - pivot) * amount + pivot
-    elif kind == "saturation":
+        return (lin - pivot) * amount + pivot
+    if kind == "saturation":
         amount = float(parameters.get("amount", 1.0))
         luma = _LUMA[0] * lin[..., 0] + _LUMA[1] * lin[..., 1] + _LUMA[2] * lin[..., 2]
-        lin = luma[..., None] + (lin - luma[..., None]) * amount
-    elif kind == "curve":
+        return luma[..., None] + (lin - luma[..., None]) * amount
+    if kind == "curve":
         mode = parameters.get("mode", "rgb")
         if mode == "luma":
             xs, ys = _validate_curve_points(parameters.get("points", _IDENTITY_CURVE))
             luma = _LUMA[0] * lin[..., 0] + _LUMA[1] * lin[..., 1] + _LUMA[2] * lin[..., 2]
             curved = np.interp(luma, xs, ys)
             ratio = np.where(luma > 1e-12, curved / np.maximum(luma, 1e-12), 1.0)
-            lin = lin * ratio[..., None]
-        elif mode == "per_channel":
+            return lin * ratio[..., None]
+        if mode == "per_channel":
+            out = lin.copy()
             points = parameters["points"]
             for key, channel in (("r", 0), ("g", 1), ("b", 2)):
                 xs, ys = _validate_curve_points(points[key])
-                lin[..., channel] = np.interp(lin[..., channel], xs, ys)
-        else:  # rgb
-            xs, ys = _validate_curve_points(parameters.get("points", _IDENTITY_CURVE))
-            lin = np.interp(lin, xs, ys)
-    elif kind == "lut":
+                out[..., channel] = np.interp(out[..., channel], xs, ys)
+            return out
+        xs, ys = _validate_curve_points(parameters.get("points", _IDENTITY_CURVE))
+        return np.interp(lin, xs, ys)
+    if kind == "lut":  # space == "linear"
         from colorai.lutcube import apply_cube, load_cube
 
-        lin = apply_cube(load_cube(parameters["path"]), lin)
-    else:  # pragma: no cover - guarded by validate_correction
-        raise ValueError(f"unknown correction kind: {kind!r}")
+        return apply_cube(load_cube(parameters["path"]), lin)
+    raise ValueError(f"unknown correction kind: {kind!r}")  # pragma: no cover
 
-    return _finish(linear_to_bt709(lin), was_uint8)
+
+def apply_correction(image_rgb: np.ndarray, kind: str, parameters: dict[str, Any]) -> np.ndarray:
+    """Apply one deterministic correction to an RGB image array."""
+    validate_correction(kind, parameters)
+    f, was_uint8 = _to_float_rgb(image_rgb)
+    if _is_gamma_kind(kind, parameters):
+        out = _apply_gamma(f, kind, parameters)
+    else:
+        out = linear_to_bt709(_apply_linear(bt709_to_linear(f), kind, parameters))
+    return _finish(out, was_uint8)
 
 
 def apply_corrections(
     image_rgb: np.ndarray, corrections: Iterable[Correction | tuple[str, dict[str, Any]]]
 ) -> np.ndarray:
-    """Apply a sequence of corrections in order (skipping disabled ones)."""
-    out = image_rgb
+    """Apply a sequence of corrections in order (skipping disabled ones).
+
+    The sequence composes in **one float pass**: values stay float64 through
+    every step and are encoded/quantized exactly once at the end (no per-step
+    uint8 round-trips), and the working space flips between gamma and linear
+    only when an op needs the other space.
+    """
+    out, was_uint8 = _to_float_rgb(image_rgb)
+    in_linear = False
     for c in corrections:
         if isinstance(c, Correction):
             if not c.enabled:
@@ -276,8 +301,20 @@ def apply_corrections(
             kind, params = c.kind, c.parameters
         else:
             kind, params = c
-        out = apply_correction(out, kind, params)
-    return out
+        validate_correction(kind, params)
+        if _is_gamma_kind(kind, params):
+            if in_linear:
+                out = linear_to_bt709(out)
+                in_linear = False
+            out = _apply_gamma(out, kind, params)
+        else:
+            if not in_linear:
+                out = bt709_to_linear(out)
+                in_linear = True
+            out = _apply_linear(out, kind, params)
+    if in_linear:
+        out = linear_to_bt709(out)
+    return _finish(out, was_uint8)
 
 
 def normalize_parameters(kind: str, parameters: dict[str, Any]) -> dict[str, Any]:

@@ -147,3 +147,76 @@ def test_render_master_no_corrections_is_identity(tmp_path):
     out = render_master(store, asset.id, tmp_path / "identity.mp4")
     frame = extract_frame(out, 0, tmp_path / "f0.png")
     assert cv2.imread(str(frame)).mean() > 250
+
+
+@requires_ffmpeg
+def test_render_preserves_audio_and_color_tags(tmp_path):
+    clip = tmp_path / "av.mp4"
+    subprocess.run(
+        [
+            ffmpeg, "-v", "error",
+            "-f", "lavfi", "-t", "1", "-i", "color=c=black:size=16x16:rate=10",
+            "-f", "lavfi", "-t", "1", "-i", "sine=frequency=440",
+            "-shortest", "-pix_fmt", "yuv420p", "-c:v", "mpeg4", "-c:a", "aac",
+            "-y", str(clip),
+        ],
+        check=True,
+    )
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("render av")
+    asset = store.add_asset(
+        project.id, source_path=str(clip), frame_rate=10.0,
+        width=16, height=16, frame_count=10, color_space="bt709", transfer="bt709",
+    )
+    shots = make_shots(asset, [(0, 9)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        session.commit()
+
+    out = render_master(store, asset.id, tmp_path / "av_out.mp4")
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries",
+         "stream=codec_type,codec_name,color_transfer", "-of", "json", str(out)],
+        capture_output=True, text=True, check=True,
+    )
+    import json
+
+    streams = json.loads(probe.stdout)["streams"]
+    types = {s["codec_type"] for s in streams}
+    assert {"video", "audio"} <= types  # audio preserved
+    video = next(s for s in streams if s["codec_type"] == "video")
+    assert video.get("color_transfer") == "bt709"  # source color tag carried through
+
+
+@requires_ffmpeg
+def test_render_rejects_non_bt709_transfer(tmp_path):
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("render hdr")
+    asset = store.add_asset(
+        project.id, source_path="/media/hdr.mov", frame_rate=25.0,
+        width=16, height=16, transfer="smpte2084",
+    )
+    with pytest.raises(ValueError, match="not yet gradeable"):
+        render_master(store, asset.id, tmp_path / "out.mp4")
+
+
+@requires_ffmpeg
+def test_render_rejects_incomplete_decode(tmp_path):
+    clip = tmp_path / "short.mp4"
+    subprocess.run(
+        [
+            ffmpeg, "-v", "error",
+            "-f", "lavfi", "-t", "1", "-i", "color=c=black:size=16x16:rate=10",
+            "-pix_fmt", "yuv420p", "-c:v", "mpeg4", "-y", str(clip),
+        ],
+        check=True,
+    )
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("render short")
+    asset = store.add_asset(
+        project.id, source_path=str(clip), frame_rate=10.0,
+        width=16, height=16, frame_count=50,  # metadata claims 50; file has 10
+    )
+    with pytest.raises(RuntimeError, match="incomplete output"):
+        render_master(store, asset.id, tmp_path / "out.mp4")

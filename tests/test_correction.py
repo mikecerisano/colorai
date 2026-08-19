@@ -95,6 +95,19 @@ def test_apply_corrections_order_and_disabled():
     assert out[0, 0].tolist() == pytest.approx([0.5, 0.5, 0.5])
 
 
+def test_stacked_corrections_compose_in_one_float_pass():
+    # Two tiny linear lifts, each individually below the uint8 quantization
+    # step: composed in float they must survive a single final quantize,
+    # instead of being rounded away after every step.
+    img = np.full((1, 1, 3), 128, dtype=np.uint8)
+    one = apply_corrections(img, [("offset", {"value": 0.001})])
+    both = apply_corrections(
+        img, [("offset", {"value": 0.001}), ("offset", {"value": 0.001})]
+    )
+    assert (one == 128).all()  # a single lift rounds away
+    assert (both > 128).all()  # composition is preserved across the stack
+
+
 @pytest.mark.parametrize(
     ("kind", "params"),
     [

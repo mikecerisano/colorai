@@ -6,12 +6,16 @@ import numpy as np
 import pytest
 
 from colorai.color import (
+    bt709_oetf,
+    bt709_oetf_inverse,
     bt709_to_linear,
     describe_working_space,
     is_gradeable_transfer,
     linear_to_bt709,
     normalize_color_space,
     normalize_transfer,
+    srgb_eotf,
+    srgb_oetf,
 )
 
 
@@ -74,3 +78,27 @@ def test_is_gradeable_transfer():
 
 def test_describe_working_space():
     assert "BT.709" in describe_working_space()
+
+
+def test_srgb_eotf_standard_value():
+    # sRGB / BT.1886 display EOTF: code 0.5 -> ~0.2140 display-linear.
+    assert srgb_eotf(0.5) == pytest.approx(0.2140, abs=1e-3)
+    assert srgb_oetf(srgb_eotf(0.5)) == pytest.approx(0.5, abs=1e-6)
+    # The pipeline aliases are the display-referred pair.
+    assert bt709_to_linear(0.5) == pytest.approx(srgb_eotf(0.5))
+    assert linear_to_bt709(0.2140) == pytest.approx(0.5, abs=1e-3)
+
+
+def test_bt709_camera_oetf_standard_values():
+    # Rec. ITU-R BT.709 camera OETF: 4.5 knee below 0.018, power above.
+    assert bt709_oetf(0.01) == pytest.approx(0.045, abs=1e-9)  # knee: 4.5 * L
+    assert bt709_oetf(1.0) == pytest.approx(1.0, abs=1e-6)
+    assert bt709_oetf(0.18) == pytest.approx(0.4089, abs=1e-3)
+    # Just above the knee the power branch applies (spec-defined ~0.0812).
+    assert bt709_oetf(0.018) == pytest.approx(0.0812, abs=1e-3)
+    # Inverse: code 0.5 -> ~0.2596 scene-linear (NOT the display ~0.2140).
+    assert bt709_oetf_inverse(0.5) == pytest.approx(0.2596, abs=1e-3)
+    assert bt709_oetf_inverse(0.045) == pytest.approx(0.01, abs=1e-5)
+    # Round-trip (tolerance absorbs the spec's knee discontinuity).
+    xs = np.linspace(0.0, 1.0, 50)
+    assert bt709_oetf_inverse(bt709_oetf(xs)) == pytest.approx(xs, abs=1e-4)

@@ -7,12 +7,23 @@ corrections (the exact same transforms the preview shows), and encodes a new
 master. The source file is never opened for writing — output goes to a new
 path.
 
+The export is **fail-safe and delivery-preserving**:
+
+* the same non-Rec.709 transfer guard as the preview is enforced up front;
+* the corrected video is encoded with the source's color tags (primaries /
+  transfer / matrix);
+* the source's audio, subtitles, chapters, and global metadata are preserved
+  by a stream-copy mux pass;
+* a decoder failure or a truncated/incomplete decode raises instead of
+  silently producing a broken master.
+
 Implementation is a correctness-first streaming pipeline: ffmpeg decodes the
 master to raw RGB24 on stdout, Python applies the shot's transform, and a
-second ffmpeg encodes the result. This guarantees the export matches the
+second ffmpeg encodes the result. That guarantees the export matches the
 preview pixel-for-pixel (modulo the encoder) at the cost of CPU/throughput —
-moving raw RGB through Python is slow for long 4K masters. A documented future
-optimization is compiling the deterministic transform to an ffmpeg/GPU path.
+moving raw RGB through Python is slow for long 4K masters. Timing is preserved
+as CFR at the asset's exact frame rate; VFR retiming is a documented future
+optimization. GPU/ffmpeg-native acceleration is likewise future work.
 """
 
 from __future__ import annotations
@@ -22,12 +33,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from colorai.color import is_gradeable_transfer
 from colorai.correction import apply_corrections
 from colorai.project.models import Correction, MediaAsset, Shot
 from colorai.project.store import ProjectStore
 
 # Raw frame transport pixel format shared by decoder and encoder.
 _PIX_FMT = "rgb24"
+
+# Canonical color values -> ffmpeg tag names for -color_primaries/-color_trc.
+_TAG_ALIASES = {
+    "bt709": "bt709",
+    "bt470bg": "bt470bg",
+    "smpte170m": "smpte170m",
+    "bt2020": "bt2020",
+    "linear": "linear",
+}
 
 
 @dataclass(frozen=True)
@@ -89,6 +110,10 @@ def corrections_for_frame(
     return ()
 
 
+def _tag(value: str | None) -> str:
+    return _TAG_ALIASES.get(value or "bt709", "bt709")
+
+
 def _decoder_cmd(source: str) -> list[str]:
     return [
         "ffmpeg", "-v", "error",
@@ -101,10 +126,12 @@ def _decoder_cmd(source: str) -> list[str]:
 
 def _encoder_cmd(
     out: str, width: int, height: int, fps: float,
-    *,
-    codec: str, crf: int, preset: str, pixel_format: str,
+    *, codec: str, crf: int, preset: str, pixel_format: str,
+    color_space: str | None, transfer: str | None,
 ) -> list[str]:
-    return [
+    primaries = _tag(color_space)
+    trc = _tag(transfer)
+    cmd = [
         "ffmpeg", "-v", "error",
         "-f", "rawvideo",
         "-pix_fmt", _PIX_FMT,
@@ -115,9 +142,40 @@ def _encoder_cmd(
         "-crf", str(crf),
         "-preset", preset,
         "-pix_fmt", pixel_format,
-        "-y",
-        out,
+        # Preserve the source's color tags so downstream color management
+        # sees the same characteristics as the master.
+        "-color_primaries", primaries,
+        "-color_trc", trc,
+        "-colorspace", primaries,
     ]
+    if codec == "libx264":
+        # x264 signals primaries/transfer via its own VUI params.
+        cmd += [
+            "-x264-params",
+            f"colorprim={primaries}:transfer={trc}:colormatrix={primaries}",
+        ]
+    cmd += ["-y", out]
+    return cmd
+
+
+def _mux_with_source(video_path: str | Path, source: str, out_path: str | Path) -> None:
+    """Stream-copy the corrected video with the source's audio, subtitles,
+    chapters, and global metadata."""
+    cmd = [
+        "ffmpeg", "-v", "error",
+        "-i", str(video_path),
+        "-i", str(source),
+        "-map", "0:v:0",
+        "-map", "1:a?",
+        "-map", "1:s?",
+        "-map_chapters", "1",
+        "-map_metadata", "1",
+        "-c", "copy",
+        "-c:s", "mov_text",  # mp4-native subtitle codec
+        "-movflags", "+faststart",
+        "-y", str(out_path),
+    ]
+    subprocess.run(cmd, check=True)
 
 
 def render_master(
@@ -133,8 +191,9 @@ def render_master(
 ) -> Path:
     """Render ``asset_id`` to ``out_path`` with its approved corrections applied.
 
-    Raises ``ValueError`` if the asset has no probed dimensions, and lets
-    ``subprocess.CalledProcessError`` propagate if ffmpeg fails.
+    Raises ``ValueError`` for missing dimensions or a non-gradeable transfer,
+    ``RuntimeError`` on decoder/encoder failure or an incomplete decode, and
+    lets ``subprocess.CalledProcessError`` propagate if the mux pass fails.
     """
     with store.session() as session:
         asset = session.get(MediaAsset, asset_id)
@@ -144,22 +203,35 @@ def render_master(
             raise ValueError(
                 f"asset {asset_id} has no probed dimensions; ingest it first"
             )
+        # Same guard as the preview: refuse to grade non-Rec.709 transfers.
+        if not is_gradeable_transfer(asset.transfer):
+            raise ValueError(
+                "grading is defined in BT.709, but this asset's transfer is "
+                f"{asset.transfer!r}; non-Rec.709 masters are not yet gradeable"
+            )
         width, height = asset.width, asset.height
         fps = asset.frame_rate
         source = asset.source_path
+        color_space = asset.color_space
+        transfer = asset.transfer
+        expected_frames = asset.frame_count
 
     spans = build_shot_spans(store, asset_id)
     frame_bytes = width * height * 3
     destination = Path(out_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
 
+    # Encode to a temporary video-only file, then mux the source's streams.
+    tmp_video = destination.with_suffix(destination.suffix + ".video.mp4")
+
     decoder = subprocess.Popen(
         _decoder_cmd(source), stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
     encoder = subprocess.Popen(
         _encoder_cmd(
-            str(destination), width, height, fps,
+            str(tmp_video), width, height, fps,
             codec=codec, crf=crf, preset=preset, pixel_format=pixel_format,
+            color_space=color_space, transfer=transfer,
         ),
         stdin=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -168,15 +240,17 @@ def render_master(
     import numpy as np
 
     frame_index = 0
-    total = asset.frame_count
+    total = expected_frames
     try:
         while True:
             raw = decoder.stdout.read(frame_bytes)
             if not raw:
                 break
-            # Partial trailing frame from a truncated stream: stop cleanly.
             if len(raw) != frame_bytes:
-                break
+                raise RuntimeError(
+                    "decoder produced a partial frame — the source stream is "
+                    "truncated or corrupt; refusing to emit an incomplete master"
+                )
             frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
             corrections = corrections_for_frame(frame_index, spans)
             if corrections:
@@ -191,12 +265,28 @@ def render_master(
                 encoder.stdin.close()
             except BrokenPipeError:
                 pass
-        decoder.stdout.close() if decoder.stdout is not None else None
+        if decoder.stdout is not None:
+            decoder.stdout.close()
         decoder.wait()
         encoder.wait()
+
+    if decoder.returncode != 0:
+        err = decoder.stderr.read().decode(errors="replace").strip()
+        raise RuntimeError(f"decoder failed: {err}")
 
     if encoder.returncode != 0:
         err = encoder.stderr.read().decode(errors="replace")
         raise RuntimeError(f"encoder failed: {err.strip()}")
 
+    # Reject incomplete decoder output (one frame of slack for metadata
+    # rounding on duration-derived frame counts).
+    if expected_frames is not None and frame_index < expected_frames - 1:
+        tmp_video.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"incomplete output: decoded {frame_index} frames, expected "
+            f"{expected_frames}; the source may be truncated"
+        )
+
+    _mux_with_source(tmp_video, source, destination)
+    tmp_video.unlink(missing_ok=True)
     return destination

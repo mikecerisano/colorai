@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 361 tests passing.
+Current progress. 368 tests passing.
 
 ## Done
 
@@ -63,14 +63,21 @@ Current progress. 361 tests passing.
   first-pass and adjust grouping + corrections; its reasoning is persisted as
   `Note` rows for human review. `get_shot_still`/`get_shot_frame` return real
   images over MCP, so a vision-capable agent can see the frames it's judging.
-- **Linear-light color management** — BT.709/sRGB ↔ linear transfer functions
-  (`color.py`); grading operations (`cdl`, `exposure`, `offset`, `rgb_balance`,
-  `contrast`, `saturation`) now apply in linear (scene-referred) light so
-  parameters are physically meaningful, while `hue_rotate` stays in gamma
-  space. Validation rejects NaN/inf parameters. The working space is declared
-  and canonicalized: ffprobe `color_space`/`color_transfer` are normalized to
-  BT.709 (defaulting untagged H.264/MP4), and grading a non-Rec.709 transfer
-  (PQ/HDR, log) is rejected rather than silently mis-graded.
+- **Linear-light color management** — `color.py` now keeps two transfer
+  families distinct: the **display-referred sRGB/BT.1886 EOTF** used to decode
+  baked masters (code 0.5 -> ~0.214 linear) and the **BT.709 camera OETF**
+  pair for scene-linear interchange (code 0.5 -> ~0.260 scene-linear), both
+  with spec-standard-value tests. Grading ops apply in linear light with a
+  single final encode; stacked corrections compose in one float pass (no
+  per-step quantization). Validation rejects NaN/inf parameters, and grading
+  non-Rec.709 transfers is rejected rather than silently mis-graded.
+- **Full-master render (delivery-preserving)** — `colorai render` enforces the
+  same non-Rec.709 transfer guard as preview, tags the output with the
+  source's color characteristics (primaries/transfer/matrix), stream-copies
+  the source's audio, subtitles, chapters, and metadata, and rejects decoder
+  failure, partial frames, and incomplete output instead of emitting a broken
+  master. Timing is CFR at the asset's exact frame rate (VFR retiming is a
+  documented future optimization).
 - **Restoration** — deterministic primitives (cross-dissolve, temporal median,
   nearest-good-frame) and a proposal boundary; generative tier is an explicit,
   approval-gated interface.
@@ -111,8 +118,9 @@ Current progress. 361 tests passing.
   reference never clobbers the subject's hero shot); matching within a variant
   is strict (no cross-lighting fallback). Cross-variant *whole-frame*
   differences are treated as expected — ``cross_variant_skin_consistency``
-  checks only face/skin consistency and proposes a skin-only ``rgb_balance``
-  when a variant genuinely drifts.
+  checks only face/skin consistency and proposes a face-region ``rgb_balance``
+  when a variant genuinely drifts (report-only — never persisted as a
+  whole-frame grade).
 - **Lower-third name suggestions** — `nametag.py` detects the lower-third
   region of a shot's still, OCRs it (Tesseract CLI, no Python binding), splits
   the first line as a candidate name (title-cased) and the rest as
@@ -168,7 +176,7 @@ Current progress. 361 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 361 tests across timecode, project model, migrations (incl. legacy
+- 368 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
   auto-assignment), correction, LUT/curve, render, resumability, editorial,
   references, matching (incl. variants), analysis, face (incl. bbox), skin,

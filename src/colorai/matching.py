@@ -7,10 +7,13 @@ explicit, human/agent-defined scope:
     subject × setup family (× optional camera angle, via the group's label)
 
 A scope is only matchable once it has an **approved reference** (a human
-decision — see :mod:`colorai.references`). Proposals are deterministic,
-include their reference and group context, and are persisted disabled unless
-asked for. Skin is compared **within the subject only** — never across
-subjects. Global median matching remains available as an explicit diagnostic
+decision — see :mod:`colorai.references`). Whole-frame proposals are
+deterministic, include their reference and group context, and are persisted
+disabled unless asked for. Face-derived skin proposals are **report-only** —
+applying them whole-frame would regrade the background, so they are never
+persisted until correction rows can carry a tracked, feathered temporal face
+mask. Skin is compared **within the subject only** — never across subjects.
+Global median matching remains available as an explicit diagnostic
 (`colorai.analysis.find_outliers`), not a default.
 """
 
@@ -43,15 +46,24 @@ class MatchProposal:
     subject_id: int
     group_id: int | None
     reasons: tuple[str, ...]
+    #: Whole-frame proposals (exposure/balance/saturation vs the reference).
     corrections: tuple[ProposedCorrection, ...]
+    #: Face-region skin proposals (``rgb_balance`` derived from skin samples).
+    #: These are **report-only**: applying them whole-frame would regrade the
+    #: background, so they are never persisted until correction rows can carry
+    #: a tracked, feathered temporal face mask used by preview and render alike.
+    skin_corrections: tuple[ProposedCorrection, ...]
 
 
 @dataclass(frozen=True)
 class VariantSkinDeviation:
-    """A lighting variant whose subject skin differs from the subject baseline.
+    """A lighting variant whose subject face-skin differs from the subject
+    baseline.
 
     Cross-variant *whole-frame* differences (window light, background) are
-    expected and never corrected; only face/skin consistency is checked.
+    expected and never corrected; only face/skin consistency is checked. The
+    correction is a face-region proposal (report-only, never a whole-frame
+    grade).
     """
 
     variant_id: int
@@ -138,6 +150,7 @@ def match_subject_in_group(
             continue
         reasons: list[str] = []
         corrections: list[ProposedCorrection] = []
+        skin_corrections: list[ProposedCorrection] = []
 
         feature = load_shot_feature(store, shot_id)
         if ref_feature is not None and feature is not None:
@@ -152,9 +165,9 @@ def match_subject_in_group(
                 skin_fix = propose_skin_match(ref_skin, face)
                 if skin_fix is not None:
                     reasons.append("skin")
-                    corrections.append(skin_fix)
+                    skin_corrections.append(skin_fix)
 
-        if corrections:
+        if corrections or skin_corrections:
             proposals.append(
                 MatchProposal(
                     shot_id=shot_id,
@@ -163,9 +176,13 @@ def match_subject_in_group(
                     group_id=group_id,
                     reasons=tuple(dict.fromkeys(reasons)),
                     corrections=tuple(corrections),
+                    skin_corrections=tuple(skin_corrections),
                 )
             )
 
+    # Persist only whole-frame proposals, and only as disabled rows. Face-
+    # region skin proposals are report-only (see MatchProposal) and are never
+    # persisted here.
     if persist and proposals:
         with store.session() as session:
             for proposal in proposals:
@@ -190,14 +207,16 @@ def cross_variant_skin_consistency(
     family_group_id: int,
     tolerance: float = 0.06,
 ) -> tuple[list[VariantSkinDeviation], str | None]:
-    """Check the subject's *skin* across a setup family's lighting variants.
+    """Check the subject's *face skin* across a setup family's lighting variants.
 
     Whole-frame differences between variants (window light, background) are
     expected and intentionally **not** corrected here. Only face/skin
-    consistency is compared: each variant's median skin is measured against the
-    subject's baseline (its hero shot, else the median of its own faces), and a
-    deviation beyond ``tolerance`` is reported as a real issue with a skin-only
-    ``rgb_balance`` proposal. Returns ``(deviations, error)``.
+    consistency is compared: each variant's median face skin is measured
+    against the subject's baseline (its hero shot, else the median of its own
+    faces), and a deviation beyond ``tolerance`` is reported as a real issue
+    with a **face-region** ``rgb_balance`` proposal. That proposal is
+    report-only: it is never persisted as a whole-frame grade (see
+    :class:`MatchProposal`). Returns ``(deviations, error)``.
     """
     import numpy as np
 

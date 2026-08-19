@@ -133,16 +133,19 @@ correction API (propose/toggle/delete) and shows the live corrected preview.
 ## Correction model
 
 **Color management.** Grading happens in a fixed working space: BT.709
-primaries and transfer (`src/colorai/color.py`). Gamma-encoded BT.709/sRGB is
-decoded to *linear* (scene-referred) light, graded, then re-encoded — so
-exposure gain 2 is one stop and CDL slope/offset/power are physically
-meaningful. `hue_rotate` is the one display-referred perceptual op and stays in
-gamma space. A master's actual characteristics are recorded on `MediaAsset`
-(`color_space`, `transfer`, canonicalized by the probe and defaulted to BT.709
-for untagged H.264/MP4); grading a non-Rec.709 transfer (PQ/HDR, log) is
-rejected rather than silently mis-graded. Managed color (OCIO, LUTs, curves)
-is the next upgrade when non-Rec.709 masters enter scope — see
-`research-notes.md`.
+primaries (`src/colorai/color.py`). Two transfer families are kept distinct:
+the **display-referred sRGB/BT.1886 EOTF** decodes baked masters (code 0.5 ->
+~0.214 display-linear; this is what the pipeline uses), and the **BT.709 camera
+OETF** pair is provided for scene-linear interchange (code 0.5 -> ~0.260
+scene-linear) — conflating them is a 17%+ error, and both are tested against
+spec standard values. ``hue_rotate`` is the one display-referred perceptual op
+and stays in gamma space. A master's actual characteristics are recorded on
+`MediaAsset` (`color_space`, `transfer`, canonicalized by the probe and
+defaulted to BT.709 for untagged H.264/MP4); grading a non-Rec.709 transfer
+(PQ/HDR, log) is rejected rather than silently mis-graded. Stacked corrections
+compose in one float pass with a single final encode (no per-step uint8
+quantization). Managed color (OCIO, LUTs, curves) is the next upgrade when
+non-Rec.709 masters enter scope — see `research-notes.md`.
 
 `Correction` rows are **deterministic, temporally stable operations**. The
 `kind` field is the discriminator; `parameters` carries the operation's
@@ -185,8 +188,13 @@ toward each other.
 `colorai render` (`src/colorai/render.py`) is the export path: it decodes the
 master to raw RGB, applies each shot's *enabled* corrections (the same
 deterministic transform the preview shows), and encodes a new master. It is a
-correctness-first streaming pipeline; GPU/ffmpeg-native acceleration is a
-documented future optimization.
+correctness-first streaming pipeline, and it is **fail-safe and
+delivery-preserving**: the same non-Rec.709 transfer guard as the preview,
+source color tags (primaries/transfer/matrix) on the output, audio/subtitles/
+chapters/metadata stream-copied from the source, and decoder failures,
+partial frames, or incomplete output rejected instead of silently emitted.
+GPU/ffmpeg-native acceleration and VFR retiming are documented future
+optimizations.
 
 `src/colorai/editorial.py` is the layer above the engine for the filmmaker's
 judgment: per-shot `review_status` (pending/approved/rejected) and `excused`
@@ -229,18 +237,23 @@ matching is:
   finished Rec.709 master.
 * **Group-aware matching** (`matching.py`, MCP ``match_subject_setup``)
   compares only a subject's shots inside the approved scope: skin **within the
-  subject** and shot level against the reference. Proposals identify their
-  reference and group, and persist **disabled** (never auto-applied). Global
-  median matching (`analysis.find_outliers`) stays available as an explicit
-  diagnostic, not a default.
+  subject** and shot level against the reference. Whole-frame proposals
+  identify their reference and group, and persist **disabled** (never
+  auto-applied). Face-derived skin proposals are **report-only** — applying
+  them whole-frame would regrade the background, so they are never persisted
+  until correction rows can carry a tracked, feathered temporal face mask used
+  by preview and render alike. Global median matching
+  (`analysis.find_outliers`) stays available as an explicit diagnostic, not a
+  default.
 * **Lighting variants** — a setup family can hold ``variant`` child groups
   (`ShotGroup.parent_id`), one per real natural-light change within an
   interview. Each variant gets its own approved reference; matching within a
   variant is strict and never falls back to another lighting condition's
   reference. Cross-variant whole-frame differences (window light, background)
   are expected and are *not* corrected — ``cross_variant_skin_consistency``
-  checks only face/skin consistency across variants and reports a skin-only
-  ``rgb_balance`` when a variant genuinely drifts.
+  checks only face/skin consistency across variants and reports a face-region
+  ``rgb_balance`` when a variant genuinely drifts (report-only — never a
+  whole-frame grade).
 * **QC signals are evidence** — clipping/crush, blur, flicker, and
   blank/duplicate frames are reported as measurements with interpretation
   notes (bright windows, practicals, dark furniture are often intentional),
