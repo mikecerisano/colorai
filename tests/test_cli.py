@@ -26,10 +26,11 @@ def test_version():
     assert exc.value.code == 0
 
 
-def test_unimplemented_command_exits_nonzero(capsys):
-    assert main(["ui", "--project", "/tmp/x.sqlite3"]) == 1
-    err = capsys.readouterr().out
-    assert "not implemented" in err
+def test_ui_subcommand_declared():
+    parser = build_parser()
+    args = parser.parse_args(["ui", "--project", "/tmp/x.sqlite3", "--port", "9000"])
+    assert args.command == "ui"
+    assert args.port == 9000
 
 
 def test_version_matches_package():

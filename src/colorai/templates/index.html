@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>ColorAI — Review</title>
+  <style>
+    body { font-family: -apple-system, "Segoe UI", sans-serif; margin: 1.5rem; background: #111; color: #eee; }
+    h1 { font-size: 1.2rem; }
+    .muted { color: #999; font-size: 0.85rem; }
+    .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; margin-top: 1rem; }
+    .shot { background: #1c1c1e; border: 1px solid #333; border-radius: 8px; overflow: hidden; }
+    .shot img { width: 100%; display: block; background: #000; }
+    .shot .meta { padding: 0.5rem 0.75rem; font-size: 0.85rem; }
+    .shot .tc { font-family: ui-monospace, monospace; color: #ccc; }
+    .metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.15rem 0.5rem; margin-top: 0.4rem; font-size: 0.75rem; color: #aaa; }
+    .metrics span { display: flex; justify-content: space-between; }
+  </style>
+</head>
+<body>
+  <h1>ColorAI Review</h1>
+  <p class="muted">{{ projects }} · {{ shots|length }} shots</p>
+  {% if not shots %}
+    <p class="muted">No shots yet — run <code>colorai analyze &lt;master&gt;</code> first.</p>
+  {% endif %}
+  <div class="shots">
+  {% for s in shots %}
+    <div class="shot">
+      <img src="{{ s.still_url }}" alt="shot {{ s.index }}">
+      <div class="meta">
+        <div class="tc">{{ s.start_tc }} → {{ s.end_tc }}</div>
+        <div class="muted">shot {{ s.index }} · {{ s.frame_count }} frames</div>
+        <div class="metrics">
+          <span>Y <b>{{ s.luma_mean }}</b></span>
+          <span>σ <b>{{ s.luma_std }}</b></span>
+          <span>sat <b>{{ s.saturation_mean }}</b></span>
+          <span>R <b>{{ s.r_mean }}</b></span>
+          <span>G <b>{{ s.g_mean }}</b></span>
+          <span>B <b>{{ s.b_mean }}</b></span>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+  </div>
+</body>
+</html>

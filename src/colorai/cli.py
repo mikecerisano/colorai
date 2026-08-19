@@ -72,6 +72,20 @@ def _run_analyze(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_ui(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from colorai.project import ProjectStore
+    from colorai.ui import create_app
+
+    project_path = Path(args.project)
+    store = ProjectStore.create(project_path)
+    stills_dir = project_path.parent / "stills"
+    app = create_app(store, stills_dir)
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -80,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "analyze":
         return _run_analyze(args)
+    if args.command == "ui":
+        return _run_ui(args)
     print(f"error: 'colorai {args.command}' is not implemented yet")
     return 1
 
