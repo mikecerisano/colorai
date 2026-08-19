@@ -200,6 +200,40 @@ def propose_shot_corrections(
 
 
 @mcp.tool()
+def track_shot_face(project: str, shot_id: int, face_index: int = 0, samples: int = 8) -> dict:
+    """Temporally track a face across a shot and return its robust skin signature.
+
+    Produces a temporally-stable skin sample (median over tracked frames) and a
+    stability score, instead of the single representative frame's point sample.
+    """
+    from colorai.project.models import MediaAsset, Shot
+    from colorai.tracking import propagate_shot_mask
+
+    store = _open(project)
+    with store.session() as session:
+        shot = session.get(Shot, shot_id)
+        if shot is None:
+            return {"error": "shot not found"}
+        asset = session.get(MediaAsset, shot.asset_id)
+
+    result = propagate_shot_mask(
+        asset.source_path,
+        shot.start_frame,
+        shot.end_frame,
+        face_index,
+        asset.frame_rate,
+        samples=samples,
+    )
+    return {
+        "tracked_frames": result["tracked_frames"],
+        "median_bgr": result.get("median_bgr"),
+        "stability": result.get("stability"),
+        "mask_coverage": float(result["mask"].mean()) if "mask" in result else None,
+        "error": result.get("error"),
+    }
+
+
+@mcp.tool()
 def list_notes(project: str, asset_id: int) -> list[dict]:
     """List agent/human annotations for an asset."""
     from colorai.project.models import Note

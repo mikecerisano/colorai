@@ -54,6 +54,7 @@ def extract_frame(
     out_path: str | Path,
     *,
     fps: float | None = None,
+    scale: int | None = None,
 ) -> Path:
     """Extract a single still from ``video_path``.
 
@@ -61,25 +62,31 @@ def extract_frame(
     timestamp and decode only a short window — fast and frame-accurate enough
     for representative stills on long masters. Without ``fps``, falls back to
     the exact but slow ``select=eq(n\\,N)`` path (decodes from frame 0).
+    ``scale`` optionally downscales the output to a target width (faster
+    sampling).
 
     ``out_path`` extension determines the still format (e.g. ``.png``).
     """
     destination = Path(out_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    vf = f"scale={scale}:-2" if scale else None
     if fps:
         timestamp = frame_index / fps
         cmd = [
             "ffmpeg", "-v", "error",
             "-ss", f"{timestamp:.6f}",
             "-i", str(video_path),
-            "-frames:v", "1",
-            "-y", str(destination),
         ]
+        if vf:
+            cmd += ["-vf", vf]
+        cmd += ["-frames:v", "1", "-y", str(destination)]
     else:
+        sel = f"select=eq(n\\,{frame_index})"
+        filter_str = f"{sel},{vf}" if vf else sel
         cmd = [
             "ffmpeg", "-v", "error",
             "-i", str(video_path),
-            "-vf", f"select=eq(n\\,{frame_index})",
+            "-vf", filter_str,
             "-frames:v", "1",
             "-y", str(destination),
         ]
