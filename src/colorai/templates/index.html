@@ -445,9 +445,24 @@
   <script>
     const ASSET_ID = {{ asset_id if asset_id is not none else "null" }};
     const HDRS = {'Content-Type':'application/json'};
+    const VIEW_KEY = 'colorai.activeView';
 
     async function request(url, method, body) {
       return fetch(url, {method, headers:HDRS, body: body !== undefined ? JSON.stringify(body) : undefined});
+    }
+
+    function savedView() {
+      try { return JSON.parse(sessionStorage.getItem(VIEW_KEY) || '{}'); }
+      catch (_) { return {}; }
+    }
+    function rememberView(update) {
+      try { sessionStorage.setItem(VIEW_KEY, JSON.stringify({...savedView(), ...update})); }
+      catch (_) { /* Browsers that block session storage still work normally. */ }
+    }
+    function reloadPreservingView() {
+      const main = document.querySelector('.main');
+      rememberView({scrollTop: main ? main.scrollTop : 0});
+      location.reload();
     }
 
     function showTab(name) {
@@ -455,11 +470,13 @@
         document.getElementById('tab-'+t+'-pane').classList.toggle('hidden', t !== name);
         document.getElementById('tab-'+t).classList.toggle('active', t === name);
       });
+      rememberView({tab: name});
     }
 
     function selectSetup(id) {
       document.querySelectorAll('.setup-card,.variant-card').forEach(c => c.classList.toggle('active', Number(c.dataset.setup) === id));
       document.querySelectorAll('.setup-workspace').forEach(w => w.classList.toggle('hidden', Number(w.dataset.workspace) !== id));
+      rememberView({setupId: id});
       showTab('setups');
     }
 
@@ -476,49 +493,49 @@
     async function assignFace(sel) {
       const subjectId = sel.value ? Number(sel.value) : null;
       await request(`/api/skin_metrics/${sel.dataset.skinMetricId}`, 'PATCH', {subject_id: subjectId});
-      location.reload();
+      reloadPreservingView();
     }
     async function renameSubject(id) {
       const name = document.getElementById('rename-'+id).value;
       await request(`/api/subjects/${id}`, 'PATCH', {name});
-      location.reload();
+      reloadPreservingView();
     }
     async function mergeSubject(dropId) {
       const keepId = Number(document.getElementById('merge-into-'+dropId).value);
       await request('/api/subjects/merge', 'POST', {keep_id: keepId, drop_id: dropId});
-      location.reload();
+      reloadPreservingView();
     }
-    async function deleteSubject(id) { await request(`/api/subjects/${id}`, 'DELETE'); location.reload(); }
+    async function deleteSubject(id) { await request(`/api/subjects/${id}`, 'DELETE'); reloadPreservingView(); }
     async function newSubject() {
       const n = prompt('New subject name');
-      if (n && ASSET_ID !== null) { await request(`/api/assets/${ASSET_ID}/subjects`, 'POST', {name:n}); location.reload(); }
+      if (n && ASSET_ID !== null) { await request(`/api/assets/${ASSET_ID}/subjects`, 'POST', {name:n}); reloadPreservingView(); }
     }
     async function createSetup() {
       const name = document.getElementById('new-setup-name').value;
-      if (name && ASSET_ID !== null) { await request(`/api/assets/${ASSET_ID}/groups`, 'POST', {name, kind:'setup'}); location.reload(); }
+      if (name && ASSET_ID !== null) { await request(`/api/assets/${ASSET_ID}/groups`, 'POST', {name, kind:'setup'}); reloadPreservingView(); }
     }
     async function createVariant(parentId) {
       const name = prompt('Lighting variant name');
-      if (name && ASSET_ID !== null) { await request(`/api/assets/${ASSET_ID}/groups`, 'POST', {name, kind:'variant', parent_id: parentId}); location.reload(); }
+      if (name && ASSET_ID !== null) { await request(`/api/assets/${ASSET_ID}/groups`, 'POST', {name, kind:'variant', parent_id: parentId}); reloadPreservingView(); }
     }
-    async function approveRef(id) { await request(`/api/reference-proposals/${id}/approve`, 'POST'); location.reload(); }
-    async function rejectRef(id) { await request(`/api/reference-proposals/${id}/reject`, 'POST'); location.reload(); }
+    async function approveRef(id) { await request(`/api/reference-proposals/${id}/approve`, 'POST'); reloadPreservingView(); }
+    async function rejectRef(id) { await request(`/api/reference-proposals/${id}/reject`, 'POST'); reloadPreservingView(); }
 
     async function acceptName(id) {
       await request(`/api/name-suggestions/${id}/accept`, 'POST', {});
-      location.reload();
+      reloadPreservingView();
     }
     async function editName(id) {
       const n = prompt('Edit name');
       if (n !== null) {
         await request(`/api/name-suggestions/${id}/accept`, 'POST', {name: n});
-        location.reload();
+        reloadPreservingView();
       }
     }
-    async function ignoreName(id) { await request(`/api/name-suggestions/${id}/ignore`, 'POST'); location.reload(); }
+    async function ignoreName(id) { await request(`/api/name-suggestions/${id}/ignore`, 'POST'); reloadPreservingView(); }
     async function assignName(id) {
       const sid = document.getElementById('assign-name-'+id).value;
-      if (sid) { await request(`/api/name-suggestions/${id}/assign`, 'POST', {subject_id: Number(sid)}); location.reload(); }
+      if (sid) { await request(`/api/name-suggestions/${id}/assign`, 'POST', {subject_id: Number(sid)}); reloadPreservingView(); }
     }
 
     // -- needs organization -------------------------------------------------
@@ -534,7 +551,7 @@
     async function organize(action, body) {
       if (ASSET_ID === null) return;
       await request(`/api/assets/${ASSET_ID}/organize`, 'POST', {...body, action});
-      location.reload();
+      reloadPreservingView();
     }
     async function createSetupFromSelected() {
       const ids = selectedShotIds();
@@ -579,13 +596,13 @@
       const gid = Number(document.getElementById(selectId).value);
       if (!gid) { alert('Pick a setup first'); return; }
       await assignShotToGroup(shotId, gid);
-      location.reload();
+      reloadPreservingView();
     }
 
     // -- corrections / before-after ----------------------------------------
     async function toggleCorrection(id, enabled) {
       await request(`/api/corrections/${id}`, 'PATCH', {enabled});
-      location.reload();
+      reloadPreservingView();
     }
     function toggleCompare(shotId) {
       document.querySelectorAll(`.shot-thumb[data-shot="${shotId}"] img[data-preview]`).forEach(img => {
@@ -596,9 +613,21 @@
       });
     }
 
-    // Open the first group by default.
-    const first = document.querySelector('.setup-card,.variant-card');
-    if (first) selectSetup(Number(first.dataset.setup));
+    function restoreView() {
+      const view = savedView();
+      if (view.tab === 'faces' || view.tab === 'inbox') {
+        showTab(view.tab);
+      } else {
+        const selected = document.querySelector(`.setup-card[data-setup="${view.setupId}"],.variant-card[data-setup="${view.setupId}"]`);
+        const first = document.querySelector('.setup-card,.variant-card');
+        if (selected || first) selectSetup(Number((selected || first).dataset.setup));
+      }
+      const main = document.querySelector('.main');
+      if (main && Number.isFinite(Number(view.scrollTop))) {
+        requestAnimationFrame(() => { main.scrollTop = Number(view.scrollTop); });
+      }
+    }
+    restoreView();
   </script>
 </body>
 </html>

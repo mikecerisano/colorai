@@ -145,6 +145,16 @@ def test_face_context_modal_hidden_state_overrides_its_flex_layout(tmp_path):
     assert ".modal.hidden { display:none; }" in body
 
 
+def test_review_actions_preserve_the_active_workspace_across_reload(tmp_path):
+    client, asset, shots, alice, bob = _client(tmp_path)
+    body = client.get("/").text
+
+    assert "const VIEW_KEY = 'colorai.activeView';" in body
+    assert "function reloadPreservingView()" in body
+    assert "sessionStorage.setItem(VIEW_KEY" in body
+    assert "restoreView();" in body
+
+
 def test_multi_face_bbox_data_present(tmp_path):
     client, asset, shots, alice, bob = _client(tmp_path)
     ws = client.get(f"/api/assets/{asset.id}/workspace").json()
