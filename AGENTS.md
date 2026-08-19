@@ -42,6 +42,7 @@ src/colorai/
   frames.py          representative still selection + extraction
   metrics.py         image statistics + sharpness
   analysis.py        shot-to-shot consistency + reference matching
+  skin_analysis.py   per-subject skin-tone matching
   correction.py      deterministic correction transforms + preview
   face.py            YuNet face detection + face-region skin sampling
   skin.py            color-only skin heuristic (experiment)

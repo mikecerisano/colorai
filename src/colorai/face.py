@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
 
+from colorai.project.models import Shot
+from colorai.project.store import ProjectStore
 from colorai.skin import skin_mask
 
 _MODEL_PATH = Path(__file__).parent / "models" / "face_detection_yunet_2023mar.onnx"
@@ -105,6 +108,7 @@ def skin_metrics_in_region(
         "bbox": [x, y, w, h],
         "skin_coverage": float(mask.mean()),
         "mean_bgr": [float(v) for v in skin_pixels.mean(axis=0)],
+        "sample_pixels": count,
     }
 
 
@@ -161,3 +165,38 @@ def face_skin_metrics(image_bgr: np.ndarray) -> list[dict]:
         )
         if m is not None
     ]
+
+
+def store_skin_metrics(
+    store: ProjectStore, shot: Shot, image_path: str | Path
+) -> list[Any]:
+    """Compute and persist skin metrics for every face in a shot's still.
+
+    Returns the created ``SkinMetric`` rows. Mean channel values are stored
+    normalized to ``[0, 1]`` (BGR order) to match ``FrameMetrics``.
+    """
+    from colorai.project.models import SkinMetric
+
+    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError(f"cannot read still: {image_path!r}")
+
+    metrics = face_skin_metrics(image)
+    rows: list[SkinMetric] = []
+    with store.session() as session:
+        for face_index, m in enumerate(metrics):
+            b, g, r = m["mean_bgr"]
+            row = SkinMetric(
+                shot_id=shot.id,
+                face_index=face_index,
+                mean_b=b / 255.0,
+                mean_g=g / 255.0,
+                mean_r=r / 255.0,
+                sample_pixels=int(m["sample_pixels"]),
+            )
+            session.add(row)
+            rows.append(row)
+        session.flush()
+        for row in rows:
+            session.refresh(row)
+    return rows

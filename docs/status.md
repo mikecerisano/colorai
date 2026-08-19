@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 184 tests passing.
+Current progress. 192 tests passing.
 
 ## Done
 
@@ -38,6 +38,11 @@ Current progress. 184 tests passing.
   fully local) plus optional MediaPipe FaceMesh landmarks (`colorai[face]`) for
   precise forehead/cheek skin sampling; color-only YCrCb heuristic for pixel
   selection.
+- **Skin metric persistence** — per-face `SkinMetric` rows (mean skin BGR +
+  sample count) written during `analyze`, with an Alembic migration.
+- **Per-subject skin-tone matching** — faces are grouped into subjects by skin
+  color and compared against each subject's *own* median (not a global
+  median), proposing `rgb_balance` corrections only within a subject.
 - **Restoration** — deterministic primitives (cross-dissolve, temporal median,
   nearest-good-frame) and a proposal boundary; generative tier is an explicit,
   approval-gated interface awaiting a local model.
@@ -54,6 +59,9 @@ Current progress. 184 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 184 tests across timecode, project model, migrations, ingest, shot
+- 192 tests across timecode, project model, migrations, ingest, shot
   detection, frames, metrics, pipeline, correction, analysis, face, skin,
-  restoration, UI, and CLI.
+  skin analysis, restoration, UI, and CLI.
+- Validated on a lifted 3-minute interview segment of a real 4K master: 45
+  shots, three skin subjects separated, and per-subject skin drift flagged
+  with proposed corrections.

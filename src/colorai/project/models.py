@@ -207,6 +207,34 @@ class Correction(Base):
     shot: Mapped[Shot] = relationship()
 
 
+class SkinMetric(Base):
+    """Skin-tone signature of one face in a shot's representative frame.
+
+    ``mean_b/g/r`` are the mean skin-pixel channel values normalized to
+    ``[0, 1]`` (BGR order), sampled from the forehead/cheeks via the face
+    pipeline in :mod:`colorai.face`. ``face_index`` is the 0-based ordinal of
+    the face within the still (a two-person shot has rows 0 and 1).
+    """
+
+    __tablename__ = "skin_metrics"
+    __table_args__ = (
+        UniqueConstraint("shot_id", "face_index", name="uq_skin_shot_face"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shot_id: Mapped[int] = mapped_column(
+        ForeignKey("shots.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    face_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    mean_b: Mapped[float] = mapped_column(Float, nullable=False)
+    mean_g: Mapped[float] = mapped_column(Float, nullable=False)
+    mean_r: Mapped[float] = mapped_column(Float, nullable=False)
+    sample_pixels: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    shot: Mapped[Shot] = relationship()
+
+
 # Silence unused-import lint for re-exported names.
 __all__ = [
     "Base",
@@ -216,5 +244,6 @@ __all__ = [
     "RepresentativeFrame",
     "FrameMetrics",
     "Correction",
+    "SkinMetric",
     "utcnow",
 ]
