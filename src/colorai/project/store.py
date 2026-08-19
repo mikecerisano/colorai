@@ -20,6 +20,7 @@ from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from colorai.color import WORKING_PRIMARIES, WORKING_TRANSFER
 from colorai.core.timecode import frames_to_timecode, is_drop_frame
 from colorai.project.models import Base, MediaAsset, Project, RepresentativeFrame, Shot
 
@@ -165,6 +166,12 @@ class ProjectStore:
         unexpected = set(probe_fields) - known
         if unexpected:
             raise TypeError(f"unknown probe fields: {sorted(unexpected)}")
+
+        # Default the working color space/transfer so the grading assumption is
+        # explicit in the row, not implicit in the code. ffprobe values are
+        # canonicalized by the probe, but direct callers may omit them.
+        probe_fields.setdefault("color_space", WORKING_PRIMARIES)
+        probe_fields.setdefault("transfer", WORKING_TRANSFER)
 
         asset = MediaAsset(
             project_id=project_id,

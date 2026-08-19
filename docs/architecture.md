@@ -125,6 +125,18 @@ correction API (propose/toggle/delete) and shows the live corrected preview.
 
 ## Correction model
 
+**Color management.** Grading happens in a fixed working space: BT.709
+primaries and transfer (`src/colorai/color.py`). Gamma-encoded BT.709/sRGB is
+decoded to *linear* (scene-referred) light, graded, then re-encoded — so
+exposure gain 2 is one stop and CDL slope/offset/power are physically
+meaningful. `hue_rotate` is the one display-referred perceptual op and stays in
+gamma space. A master's actual characteristics are recorded on `MediaAsset`
+(`color_space`, `transfer`, canonicalized by the probe and defaulted to BT.709
+for untagged H.264/MP4); grading a non-Rec.709 transfer (PQ/HDR, log) is
+rejected rather than silently mis-graded. Managed color (OCIO, LUTs, curves)
+is the next upgrade when non-Rec.709 masters enter scope — see
+`research-notes.md`.
+
 `Correction` rows are **deterministic, temporally stable operations**. The
 `kind` field is the discriminator; `parameters` carries the operation's
 parameters; `enabled` allows a correction to be turned off without deletion.

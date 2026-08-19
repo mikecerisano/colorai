@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 239 tests passing.
+Current progress. 250 tests passing.
 
 ## Done
 
@@ -59,6 +59,14 @@ Current progress. 239 tests passing.
   first-pass and adjust grouping + corrections; its reasoning is persisted as
   `Note` rows for human review. `get_shot_still`/`get_shot_frame` return real
   images over MCP, so a vision-capable agent can see the frames it's judging.
+- **Linear-light color management** — BT.709/sRGB ↔ linear transfer functions
+  (`color.py`); grading operations (`cdl`, `exposure`, `offset`, `rgb_balance`,
+  `contrast`, `saturation`) now apply in linear (scene-referred) light so
+  parameters are physically meaningful, while `hue_rotate` stays in gamma
+  space. Validation rejects NaN/inf parameters. The working space is declared
+  and canonicalized: ffprobe `color_space`/`color_transfer` are normalized to
+  BT.709 (defaulting untagged H.264/MP4), and grading a non-Rec.709 transfer
+  (PQ/HDR, log) is rejected rather than silently mis-graded.
 - **Restoration** — deterministic primitives (cross-dissolve, temporal median,
   nearest-good-frame) and a proposal boundary; generative tier is an explicit,
   approval-gated interface awaiting a local model.
@@ -75,7 +83,7 @@ Current progress. 239 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 239 tests across timecode, project model, migrations, ingest, shot
+- 250 tests across timecode, project model, migrations, ingest, shot
   detection, frames, metrics, pipeline, correction, analysis, face, skin,
   skin analysis, tracking, anomaly, restoration, MCP, UI, and CLI.
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45

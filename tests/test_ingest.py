@@ -102,6 +102,15 @@ def test_probe_asset_fields_non_none(sample_video):
 
 
 @requires_ffmpeg
+def test_probe_defaults_untagged_to_bt709(sample_video):
+    # The lavfi testsrc encode carries no explicit color tags, so both the
+    # transfer and primaries should fall back to the BT.709 working space.
+    probe = probe_media(sample_video)
+    assert probe.transfer == "bt709"
+    assert probe.color_space == "bt709"
+
+
+@requires_ffmpeg
 def test_probe_audio_only_raises(audio_only):
     with pytest.raises(ValueError):
         probe_media(audio_only)

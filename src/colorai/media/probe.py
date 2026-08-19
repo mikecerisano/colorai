@@ -15,6 +15,8 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+from colorai.color import normalize_color_space, normalize_transfer
+
 # Probe fields that map 1:1 onto MediaAsset columns (and are accepted by
 # ``ProjectStore.add_asset`` as keyword arguments).
 _ASSET_FIELDS = (
@@ -113,7 +115,7 @@ def probe_media(path: str | Path) -> MediaProbe:
         frame_count=frame_count,
         duration_seconds=float(duration) if duration is not None else None,
         pixel_format=video.get("pix_fmt"),
-        color_space=video.get("color_space"),
-        transfer=video.get("color_transfer"),
+        color_space=normalize_color_space(video.get("color_space")),
+        transfer=normalize_transfer(video.get("color_transfer")),
         codec_name=video.get("codec_name"),
     )

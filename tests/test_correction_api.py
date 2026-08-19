@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from colorai.color import bt709_to_linear, linear_to_bt709
 from colorai.project import ProjectStore, make_representative_frame, make_shots
 from colorai.ui import create_app
 
@@ -121,8 +122,9 @@ def test_preview_applies_correction(tmp_path):
     )
     r = client.get(f"/shots/{shot_id}/preview.png")
     img = cv2.imdecode(np.frombuffer(r.content, dtype=np.uint8), cv2.IMREAD_COLOR)
-    # Mid-gray * 2 -> clipped to white.
-    assert img.mean() > 250
+    # Mid-gray decoded to linear, doubled, then re-encoded.
+    expected = float(linear_to_bt709(bt709_to_linear(128 / 255) * 2.0))
+    assert img.mean() == pytest.approx(expected * 255, abs=5)
 
 
 def test_preview_404_for_unknown_shot(tmp_path):

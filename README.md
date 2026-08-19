@@ -12,7 +12,9 @@ filmmaker always holding final approval.
   correction is an explicit row in a local SQLite project database.
 - **Deterministic grading** — corrections are exposure / offset / RGB balance /
   ASC CDL / contrast / saturation / hue-rotate, never generative repainting of
-  normal footage.
+  normal footage. Grades are applied in **linear BT.709 light** (scene-referred),
+  so exposure gain 2 is one stop and CDL slope/offset/power are physically
+  meaningful; `hue_rotate` is a display-referred perceptual op.
 - **Identity-aware skin QC** — faces are grouped by a face-recognition
   embedding (not skin color), then matched *within each subject* so two people
   are never pulled toward each other.
@@ -89,7 +91,7 @@ record reasoning.
 .venv/bin/python -m pytest
 ```
 
-229 tests, including exhaustive SMPTE drop-frame round-trips, real
+250 tests, including exhaustive SMPTE drop-frame round-trips, real
 ffmpeg-encoded fixtures, and end-to-end pipeline + MCP checks. Tests that need
 `ffmpeg` skip automatically when it's absent.
 

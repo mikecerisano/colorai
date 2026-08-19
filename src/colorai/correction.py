@@ -9,6 +9,12 @@ Image convention: HxWx3 **RGB** order, values in ``[0, 1]`` (float) or
 ``[0, 255]`` (uint8). The output matches the input's numeric kind (uint8 in ->
 uint8 out, float in -> float out).
 
+**Working space:** grading operations (everything except ``hue_rotate``) are
+applied in *linear* BT.709 light, so parameters are physically meaningful —
+``exposure`` gain 2 is one stop, ``offset`` is a scene-linear lift, and ASC CDL
+slope/offset/power are linear. ``hue_rotate`` is a display-referred perceptual
+op and stays in gamma space.
+
 Supported kinds (see :func:`validate_correction` for parameter shapes):
 
 * ``cdl``         — ASC CDL: per-channel slope/offset/power
@@ -29,7 +35,8 @@ from typing import Any, Iterable
 import cv2
 import numpy as np
 
-from colorai.project.models import Correction, Shot
+from colorai.color import bt709_to_linear, is_gradeable_transfer, linear_to_bt709
+from colorai.project.models import Correction, MediaAsset, Shot
 from colorai.project.store import ProjectStore
 
 _LUMA = (0.2126, 0.7152, 0.0722)
@@ -137,36 +144,42 @@ def apply_correction(image_rgb: np.ndarray, kind: str, parameters: dict[str, Any
     validate_correction(kind, parameters)
     f, was_uint8 = _to_float_rgb(image_rgb)
 
-    if kind == "cdl":
-        slope = _as_vec3(parameters.get("slope"), (1.0, 1.0, 1.0))
-        offset = _as_vec3(parameters.get("offset"), (0.0, 0.0, 0.0))
-        power = _as_vec3(parameters.get("power"), (1.0, 1.0, 1.0))
-        out = np.power(np.clip(f * slope + offset, 0.0, None), 1.0 / power)
-    elif kind == "exposure":
-        out = f * float(parameters.get("gain", 1.0))
-    elif kind == "offset":
-        out = f + float(parameters.get("value", 0.0))
-    elif kind == "rgb_balance":
-        gain = _as_vec3(parameters.get("gain"), (1.0, 1.0, 1.0))
-        out = f * gain
-    elif kind == "contrast":
-        amount = float(parameters.get("amount", 1.0))
-        pivot = float(parameters.get("pivot", 0.5))
-        out = (f - pivot) * amount + pivot
-    elif kind == "saturation":
-        amount = float(parameters.get("amount", 1.0))
-        luma = _LUMA[0] * f[..., 0] + _LUMA[1] * f[..., 1] + _LUMA[2] * f[..., 2]
-        out = luma[..., None] + (f - luma[..., None]) * amount
-    elif kind == "hue_rotate":
+    if kind == "hue_rotate":
+        # Perceptual op: rotate hue on display-referred (gamma) values.
         degrees = float(parameters.get("degrees", 0.0))
         u8 = (np.clip(f, 0.0, 1.0) * 255.0).round().astype(np.uint8)
         hsv = cv2.cvtColor(u8, cv2.COLOR_RGB2HSV)
         hsv[..., 0] = (hsv[..., 0].astype(np.int32) + int(round(degrees / 2.0))) % 180
         out = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB).astype(np.float64) / 255.0
+        return _finish(out, was_uint8)
+
+    # Grade in linear (scene-referred) light.
+    lin = bt709_to_linear(f)
+
+    if kind == "cdl":
+        slope = _as_vec3(parameters.get("slope"), (1.0, 1.0, 1.0))
+        offset = _as_vec3(parameters.get("offset"), (0.0, 0.0, 0.0))
+        power = _as_vec3(parameters.get("power"), (1.0, 1.0, 1.0))
+        lin = np.power(np.clip(lin * slope + offset, 0.0, None), 1.0 / power)
+    elif kind == "exposure":
+        lin = lin * float(parameters.get("gain", 1.0))
+    elif kind == "offset":
+        lin = lin + float(parameters.get("value", 0.0))
+    elif kind == "rgb_balance":
+        gain = _as_vec3(parameters.get("gain"), (1.0, 1.0, 1.0))
+        lin = lin * gain
+    elif kind == "contrast":
+        amount = float(parameters.get("amount", 1.0))
+        pivot = float(parameters.get("pivot", 0.5))
+        lin = (lin - pivot) * amount + pivot
+    elif kind == "saturation":
+        amount = float(parameters.get("amount", 1.0))
+        luma = _LUMA[0] * lin[..., 0] + _LUMA[1] * lin[..., 1] + _LUMA[2] * lin[..., 2]
+        lin = luma[..., None] + (lin - luma[..., None]) * amount
     else:  # pragma: no cover - guarded by validate_correction
         raise ValueError(f"unknown correction kind: {kind!r}")
 
-    return _finish(out, was_uint8)
+    return _finish(linear_to_bt709(lin), was_uint8)
 
 
 def apply_corrections(
@@ -194,6 +207,12 @@ def load_corrected_still(store: ProjectStore, shot: Shot) -> np.ndarray:
     from colorai.project.models import RepresentativeFrame
 
     with store.session() as session:
+        asset = session.get(MediaAsset, shot.asset_id)
+        if asset is not None and not is_gradeable_transfer(asset.transfer):
+            raise ValueError(
+                "grading is defined in BT.709, but this asset's transfer is "
+                f"{asset.transfer!r}; non-Rec.709 masters are not yet gradeable"
+            )
         rf = session.query(RepresentativeFrame).filter_by(shot_id=shot.id).first()
         if rf is None or not rf.image_path:
             raise ValueError(f"shot {shot.id} has no representative frame")
