@@ -96,6 +96,28 @@ class SkinAssign(BaseModel):
     subject_id: int | None = None
 
 
+class ShotUpdate(BaseModel):
+    review_status: str | None = None
+    excused: bool | None = None
+
+
+class SplitIn(BaseModel):
+    at_frame: int
+
+
+class ShotMergeIn(BaseModel):
+    shot_id_a: int
+    shot_id_b: int
+
+
+class GroupIn(BaseModel):
+    name: str
+
+
+class GroupAssign(BaseModel):
+    group_id: int
+
+
 class NoteIn(BaseModel):
     text: str
     author: str = "human"
@@ -196,8 +218,113 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             "end_frame": shot.end_frame,
             "start_timecode": shot.start_timecode,
             "end_timecode": shot.end_timecode,
+            "review_status": shot.review_status,
+            "excused": shot.excused,
+            "group_id": shot.group_id,
             "corrections": [_correction_dict(c) for c in corrections],
         }
+
+    @app.patch("/api/shots/{shot_id}")
+    def update_shot(shot_id: int, payload: ShotUpdate):
+        from colorai.editorial import set_excused, set_review_status
+
+        try:
+            if payload.review_status is not None:
+                set_review_status(store, shot_id, payload.review_status)
+            if payload.excused is not None:
+                set_excused(store, shot_id, payload.excused)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        with store.session() as session:
+            shot = session.get(Shot, shot_id)
+            if shot is None:
+                raise HTTPException(status_code=404, detail="shot not found")
+            return {"id": shot.id, "review_status": shot.review_status, "excused": shot.excused}
+
+    @app.post("/api/shots/{shot_id}/split", status_code=201)
+    def split_shot_endpoint(shot_id: int, payload: SplitIn):
+        from colorai.editorial import split_shot as _split
+
+        try:
+            a, b = _split(store, shot_id, payload.at_frame)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"first": a.id, "second": b.id}
+
+    @app.post("/api/shots/merge", status_code=200)
+    def merge_shots_endpoint(payload: ShotMergeIn):
+        from colorai.editorial import merge_shots as _merge
+
+        try:
+            merged = _merge(store, payload.shot_id_a, payload.shot_id_b)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"id": merged.id, "start_frame": merged.start_frame, "end_frame": merged.end_frame}
+
+    # -- shot groups ---------------------------------------------------------
+
+    @app.get("/api/assets/{asset_id}/groups")
+    def list_groups_endpoint(asset_id: int):
+        from colorai.editorial import list_groups as _list
+        from colorai.project.models import ShotGroup
+
+        with store.session() as session:
+            if session.get(MediaAsset, asset_id) is None:
+                raise HTTPException(status_code=404, detail="asset not found")
+            groups = _list(store, asset_id)
+            return [
+                {
+                    "id": g.id,
+                    "name": g.name,
+                    "shot_ids": [
+                        s.id for s in session.query(Shot).filter_by(group_id=g.id).order_by(Shot.index).all()
+                    ],
+                }
+                for g in groups
+            ]
+
+    @app.post("/api/assets/{asset_id}/groups", status_code=201)
+    def create_group_endpoint(asset_id: int, payload: GroupIn):
+        from colorai.editorial import create_group as _create
+
+        try:
+            group = _create(store, asset_id, payload.name)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"id": group.id, "name": group.name, "shot_ids": []}
+
+    @app.patch("/api/groups/{group_id}")
+    def rename_group_endpoint(group_id: int, payload: GroupIn):
+        from colorai.editorial import rename_group as _rename
+
+        group = _rename(store, group_id, payload.name)
+        if group is None:
+            raise HTTPException(status_code=404, detail="group not found")
+        return {"id": group.id, "name": group.name}
+
+    @app.delete("/api/groups/{group_id}", status_code=204)
+    def delete_group_endpoint(group_id: int):
+        from colorai.editorial import delete_group as _delete
+
+        _delete(store, group_id)
+
+    @app.put("/api/shots/{shot_id}/group")
+    def assign_shot_group_endpoint(shot_id: int, payload: GroupAssign):
+        from colorai.editorial import assign_shot_group as _assign
+
+        shot = _assign(store, shot_id, payload.group_id)
+        if shot is None:
+            raise HTTPException(status_code=404, detail="shot or group not found")
+        return {"id": shot.id, "group_id": shot.group_id}
+
+    @app.delete("/api/shots/{shot_id}/group")
+    def unassign_shot_group_endpoint(shot_id: int):
+        from colorai.editorial import unassign_shot_group as _unassign
+
+        shot = _unassign(store, shot_id)
+        if shot is None:
+            raise HTTPException(status_code=404, detail="shot not found")
+        return {"id": shot.id, "group_id": shot.group_id}
 
     @app.post("/api/shots/{shot_id}/corrections", status_code=201)
     def add_correction(shot_id: int, payload: CorrectionIn):

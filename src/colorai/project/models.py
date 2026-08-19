@@ -132,9 +132,21 @@ class Shot(Base):
     start_timecode: Mapped[str] = mapped_column(String(16), nullable=False)
     end_timecode: Mapped[str] = mapped_column(String(16), nullable=False)
 
+    # Editorial state: human review/approval and intentional-exception marker.
+    review_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending"
+    )
+    excused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # Scene / camera-family grouping (human-editable).
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shot_groups.id", ondelete="SET NULL"), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     asset: Mapped[MediaAsset] = relationship(back_populates="shots")
+    group: Mapped["ShotGroup | None"] = relationship(back_populates="shots")
     representative_frame: Mapped["RepresentativeFrame | None"] = relationship(
         back_populates="shot", cascade="all, delete-orphan", uselist=False
     )
@@ -143,6 +155,27 @@ class Shot(Base):
     def frame_count(self) -> int:
         """Number of frames in the shot (inclusive bounds)."""
         return self.end_frame - self.start_frame + 1
+
+
+class ShotGroup(Base):
+    """A human-editable scene / camera-family grouping of shots.
+
+    Lets the reviewer cluster shots that share a scene or a camera setup (e.g.
+    "interview cam A"), independent of the automatic shot detection and the
+    per-person ``Subject`` grouping.
+    """
+
+    __tablename__ = "shot_groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("media_assets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    asset: Mapped[MediaAsset] = relationship()
+    shots: Mapped[list["Shot"]] = relationship(back_populates="group")
 
 
 class RepresentativeFrame(Base):
@@ -302,6 +335,7 @@ __all__ = [
     "Project",
     "MediaAsset",
     "Shot",
+    "ShotGroup",
     "RepresentativeFrame",
     "FrameMetrics",
     "Correction",

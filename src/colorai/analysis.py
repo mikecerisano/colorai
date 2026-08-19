@@ -68,14 +68,23 @@ def _clamp_gain(value: float) -> float:
     return max(MIN_GAIN, min(MAX_GAIN, value))
 
 
-def load_shot_features(store: ProjectStore, asset_id: int) -> list[ShotFeature]:
-    """Collect one feature vector per shot from its stored metrics."""
+def load_shot_features(
+    store: ProjectStore, asset_id: int, *, skip_excused: bool = True
+) -> list[ShotFeature]:
+    """Collect one feature vector per shot from its stored metrics.
+
+    ``skip_excused`` omits shots marked as intentional exceptions, so the
+    outlier detector does not propose corrections for a deviation the
+    filmmaker has already accepted.
+    """
     features: list[ShotFeature] = []
     with store.session() as session:
         shots = (
             session.query(Shot).filter_by(asset_id=asset_id).order_by(Shot.index).all()
         )
         for shot in shots:
+            if skip_excused and shot.excused:
+                continue
             metrics = (
                 session.query(FrameMetrics)
                 .filter_by(shot_id=shot.id)

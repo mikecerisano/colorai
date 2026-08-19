@@ -67,7 +67,8 @@ def test_analyze_master_force_reanalyzes(tmp_path):
         [
             ffmpeg, "-v", "error",
             "-f", "lavfi", "-t", "1", "-i", "color=c=black:size=32x32:rate=25",
-            "-filter_complex", "format=yuv420p",
+            "-f", "lavfi", "-t", "1", "-i", "color=c=white:size=32x32:rate=25",
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0,format=yuv420p",
             "-c:v", "mpeg4", "-y", str(clip),
         ],
         check=True,
@@ -78,6 +79,14 @@ def test_analyze_master_force_reanalyzes(tmp_path):
     stills = tmp_path / "stills"
 
     first = analyze_master(store, project.id, clip, stills_dir=stills)
-    forced = analyze_master(store, project.id, clip, stills_dir=stills, resume=False)
+    assert len(first.shots) == 2
 
-    assert forced.asset.id != first.asset.id  # a fresh asset was registered
+    # A manual merge collapses the two shots into one.
+    from colorai.editorial import merge_shots
+
+    merge_shots(store, first.shots[0].id, first.shots[1].id)
+
+    # Forcing re-detection undoes the manual edit (same asset, fresh shots).
+    forced = analyze_master(store, project.id, clip, stills_dir=stills, resume=False)
+    assert forced.asset.id == first.asset.id
+    assert len(forced.shots) == 2

@@ -180,3 +180,38 @@ def test_mcp_server_lists_tools():
     assert "get_shot" in names
     assert "assign_face" in names
     assert "add_note" in names
+    assert "split_shot" in names
+    assert "merge_shots" in names
+    assert "set_shot_review_status" in names
+    assert "create_shot_group" in names
+
+
+def test_editorial_review_and_group_tools(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+
+    assert mcp_server.set_shot_review_status(db, shots[0].id, "approved") == "ok"
+    assert mcp_server.set_shot_excused(db, shots[0].id, True) == "ok"
+
+    detail = mcp_server.get_shot(db, shots[0].id)
+    assert detail["review_status"] == "approved"
+    assert detail["excused"] is True
+
+    group = mcp_server.create_shot_group(db, asset.id, "cam A")
+    assert mcp_server.list_shot_groups(db, asset.id)[0]["name"] == "cam A"
+    assert mcp_server.assign_shot_group(db, shots[0].id, group["id"]) == "ok"
+    assert mcp_server.get_shot(db, shots[0].id)["group_id"] == group["id"]
+    assert mcp_server.unassign_shot_group(db, shots[0].id) == "ok"
+    assert mcp_server.delete_shot_group(db, group["id"]) == "ok"
+    assert mcp_server.list_shot_groups(db, asset.id) == []
+
+
+def test_split_and_merge_tools(tmp_path):
+    db, asset, shots, subject = _make_store(tmp_path)
+
+    result = mcp_server.split_shot(db, shots[0].id, at_frame=10)
+    first, second = result["first"], result["second"]
+    assert (first["start_frame"], first["end_frame"]) == (0, 9)
+    assert (second["start_frame"], second["end_frame"]) == (10, 24)
+
+    merged = mcp_server.merge_shots(db, first["id"], second["id"])
+    assert (merged["start_frame"], merged["end_frame"]) == (0, 24)

@@ -86,6 +86,9 @@ def list_shots(project: str, asset_id: int) -> list[dict]:
                 "end_frame": s.end_frame,
                 "start_timecode": s.start_timecode,
                 "end_timecode": s.end_timecode,
+                "review_status": s.review_status,
+                "excused": s.excused,
+                "group_id": s.group_id,
             }
             for s in session.query(Shot).filter_by(asset_id=asset_id).order_by(Shot.index).all()
         ]
@@ -113,6 +116,9 @@ def get_shot(project: str, shot_id: int) -> dict:
             "end_frame": shot.end_frame,
             "start_timecode": shot.start_timecode,
             "end_timecode": shot.end_timecode,
+            "review_status": shot.review_status,
+            "excused": shot.excused,
+            "group_id": shot.group_id,
             "metrics": {
                 "luma_mean": metrics.luma_mean if metrics else None,
                 "luma_std": metrics.luma_std if metrics else None,
@@ -428,6 +434,96 @@ def set_reference(project: str, subject_id: int, shot_id: int) -> str:
     from colorai.skin_analysis import set_reference as _set_ref
 
     return "ok" if _set_ref(_open(project), subject_id, shot_id) else "not found"
+
+
+# ---------------------------------------------------------------------------
+# Editorial tools: review state, exceptions, grouping, split/merge
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def set_shot_review_status(project: str, shot_id: int, status: str) -> str:
+    """Set a shot's review status: pending / approved / rejected."""
+    from colorai.editorial import set_review_status as _set
+
+    shot = _set(_open(project), shot_id, status)
+    return "ok" if shot else "not found"
+
+
+@mcp.tool()
+def set_shot_excused(project: str, shot_id: int, excused: bool) -> str:
+    """Mark a shot as an intentional exception (outlier detection skips it)."""
+    from colorai.editorial import set_excused as _set
+
+    shot = _set(_open(project), shot_id, excused)
+    return "ok" if shot else "not found"
+
+
+@mcp.tool()
+def split_shot(project: str, shot_id: int, at_frame: int) -> dict:
+    """Split a shot at ``at_frame`` (strictly inside); returns the two new shots."""
+    from colorai.editorial import split_shot as _split
+
+    a, b = _split(_open(project), shot_id, at_frame)
+    return {
+        "first": {"id": a.id, "start_frame": a.start_frame, "end_frame": a.end_frame},
+        "second": {"id": b.id, "start_frame": b.start_frame, "end_frame": b.end_frame},
+    }
+
+
+@mcp.tool()
+def merge_shots(project: str, shot_id_a: int, shot_id_b: int) -> dict:
+    """Merge two adjacent shots into one (lower-index shot survives)."""
+    from colorai.editorial import merge_shots as _merge
+
+    m = _merge(_open(project), shot_id_a, shot_id_b)
+    return {"id": m.id, "start_frame": m.start_frame, "end_frame": m.end_frame}
+
+
+@mcp.tool()
+def create_shot_group(project: str, asset_id: int, name: str) -> dict:
+    """Create a scene/camera-family group for an asset."""
+    from colorai.editorial import create_group as _create
+
+    g = _create(_open(project), asset_id, name)
+    return {"id": g.id, "name": g.name}
+
+
+@mcp.tool()
+def list_shot_groups(project: str, asset_id: int) -> list[dict]:
+    """List shot groups (scene/camera families) for an asset."""
+    from colorai.editorial import list_groups as _list
+
+    return [{"id": g.id, "name": g.name} for g in _list(_open(project), asset_id)]
+
+
+@mcp.tool()
+def rename_shot_group(project: str, group_id: int, name: str) -> str:
+    from colorai.editorial import rename_group as _rename
+
+    return "ok" if _rename(_open(project), group_id, name) else "not found"
+
+
+@mcp.tool()
+def delete_shot_group(project: str, group_id: int) -> str:
+    from colorai.editorial import delete_group as _delete
+
+    _delete(_open(project), group_id)
+    return "ok"
+
+
+@mcp.tool()
+def assign_shot_group(project: str, shot_id: int, group_id: int) -> str:
+    """Add a shot to a group."""
+    from colorai.editorial import assign_shot_group as _assign
+
+    return "ok" if _assign(_open(project), shot_id, group_id) else "not found"
+
+
+@mcp.tool()
+def unassign_shot_group(project: str, shot_id: int) -> str:
+    from colorai.editorial import unassign_shot_group as _unassign
+
+    return "ok" if _unassign(_open(project), shot_id) else "not found"
 
 
 @mcp.tool()
