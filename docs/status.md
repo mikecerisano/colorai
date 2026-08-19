@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 250 tests passing.
+Current progress. 288 tests passing.
 
 ## Done
 
@@ -21,7 +21,11 @@ Current progress. 250 tests passing.
 - **Image metrics** — luma percentiles/dispersion, RGB means, saturation proxy,
   and a sharpness metric.
 - **Analysis pipeline** — `colorai analyze` runs ingest → shots → frames →
-  metrics and persists everything.
+  metrics and persists everything, and is **resumable**: an unchanged master is
+  recognized by a fast content fingerprint and its cached results are reused.
+- **Full-master render** — `colorai render` applies each shot's approved,
+  enabled corrections to the real frames and encodes a new master
+  (`render.py`); the transform matches the preview exactly.
 - **Review UI** — `colorai ui` serves a shot-by-shot review page.
 - **Correction schema + deterministic transform** — `cdl`, `exposure`,
   `offset`, `rgb_balance`, `contrast`, `saturation`, `hue_rotate`, with
@@ -69,23 +73,43 @@ Current progress. 250 tests passing.
   (PQ/HDR, log) is rejected rather than silently mis-graded.
 - **Restoration** — deterministic primitives (cross-dissolve, temporal median,
   nearest-good-frame) and a proposal boundary; generative tier is an explicit,
-  approval-gated interface awaiting a local model.
+  approval-gated interface.
+- **Generative loader** — `generative.py` resolves RIFE + LaMa ONNX models from
+  `COLORAI_GENERATIVE_MODEL_DIR`, loads them via ONNX Runtime (optional
+  `colorai[generative]` extra), and reports availability
+  (`generative_status` MCP tool); inference I/O lands with the model files.
+- **Editorial intelligence** — per-shot `review_status` (pending/approved/
+  rejected) and `excused` (intentional-exception) flags; scene/camera-family
+  `ShotGroup` grouping; manual `split_shot` / `merge_shots` that preserve
+  corrections and reset the asset for a re-derive. Exposed via UI, API, and
+  MCP; the outlier detector skips excused shots.
+- **Temporal QC** — `qc.py` detects frame-to-frame flicker, per-shot clipped
+  highlights / crushed blacks (from stored luma percentiles), and blank /
+  duplicate damaged-frame signatures; exposed via MCP.
 - **Docs** — `architecture.md`, `dependency-audit.md`, `research-notes.md`,
   `AGENTS.md`, this file.
 
 ## Not yet done (next)
 
-- Install/bundle the generative models (RIFE + LaMa ONNX) and wire the loader
-  (model selection is decided; the deterministic tier is complete).
+- Bundle the generative model files themselves (RIFE + LaMa ONNX) — the loader
+  and status surface are wired; the models are large and gitignored.
+- Per-model RIFE/LaMa inference I/O (pre/post-processing), which depends on the
+  exact ONNX export contract of the chosen checkpoint.
+- OCIO / LUT / curve support for non-Rec.709 masters (working space is fixed
+  BT.709 for now).
+- Rolling-shutter detection (needs camera-motion priors).
+- Long-form/GPU acceleration for full-master render (the Python streaming path
+  is correctness-first, not fast).
 - New Alembic revisions for any future schema changes (the machinery exists).
 
 ## Verified
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 250 tests across timecode, project model, migrations, ingest, shot
-  detection, frames, metrics, pipeline, correction, analysis, face, skin,
-  skin analysis, tracking, anomaly, restoration, MCP, UI, and CLI.
+- 288 tests across timecode, project model, migrations, ingest, shot
+  detection, frames, metrics, pipeline, correction, render, resumability,
+  editorial, analysis, face, skin, skin analysis, tracking, anomaly, QC,
+  generative, restoration, MCP, UI, and CLI.
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45
   shots, three skin subjects separated, and per-subject skin drift flagged
   with proposed corrections.

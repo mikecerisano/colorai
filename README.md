@@ -20,6 +20,13 @@ filmmaker always holding final approval.
   are never pulled toward each other.
 - **Temporal** — a face can be tracked across a shot for a stable skin
   signature and a propagated mask, instead of a single-frame snapshot.
+- **Full-master export** — approved shot corrections render across the real
+  frames to a new master (the same deterministic transforms the preview shows).
+- **Resumable + editable** — re-analysis is cached by source identity; manual
+  split/merge, review/approval state, intentional-exception flags, and
+  scene/camera-family grouping all survive a re-run.
+- **Temporal QC** — flicker, clipped highlights, crushed blacks, and blank /
+  duplicate damaged-frame signatures, alongside blur-pulse detection.
 - **Agent-ready (MCP)** — `colorai mcp` exposes the whole engine (including
   real image frames) to Claude Code / Codex / ChatGPT, with agent reasoning
   persisted as reviewable notes.
@@ -29,11 +36,16 @@ filmmaker always holding final approval.
 ```bash
 python3.12 -m venv .venv
 .venv/bin/pip install -e ".[web,dev]"        # core + review UI + tests
-# optional extras: ".[face]"  -> MediaPipe landmarks for precise skin sampling
-#                  ".[agent]" -> MCP server for LLM/agent integration
+# optional extras: ".[face]"       -> MediaPipe landmarks for precise skin sampling
+#                  ".[agent]"      -> MCP server for LLM/agent integration
+#                  ".[generative]" -> onnxruntime for the RIFE/LaMa restoration tier
 
 # Analyze a master end-to-end (ingest -> shots -> frames -> metrics -> skin)
 .venv/bin/colorai analyze /path/to/master.mov --project data/project.sqlite3
+# Re-analyzing the same unchanged master resumes from cache; --force re-detects
+
+# Render the master with approved shot corrections applied to a new file
+.venv/bin/colorai render --project data/project.sqlite3 --out /path/to/graded.mp4
 
 # Start the local review UI (shots, subjects, notes, corrections, tracking)
 .venv/bin/colorai ui --project data/project.sqlite3 --port 8000
@@ -49,12 +61,14 @@ python3.12 -m venv .venv
 
 ## The pipeline
 
-`colorai analyze` runs, non-destructively:
+`colorai analyze` runs, non-destructively, and is **resumable**: re-running on
+an unchanged master returns the cached analysis, and re-running after a manual
+edit only re-derives what changed.
 
 1. **Ingest** — ffprobe the master (exact rational frame rate, so 29.97 drop-frame
-   is handled correctly).
+   is handled correctly) and record a fast content fingerprint.
 2. **Shot detection** — PySceneDetect, stored as inclusive 0-based frame bounds
-   + SMPTE timecode.
+   + SMPTE timecode (skipped when shots already exist, so manual edits survive).
 3. **Representative frames** — seek-optimized extraction (middle frame, or
    content-aware "sharpest").
 4. **Metrics** — luma percentiles, RGB means, saturation, sharpness.
@@ -70,7 +84,8 @@ record reasoning.
 
 - **Deterministic layer** (`src/colorai/`) — timecode, project model, ingest,
   shot detection, metrics, skin analysis, tracking, correction transforms,
-  restoration (deterministic first, generative gated), review UI.
+  full-master render, editorial state (split/merge, approval, grouping),
+  temporal QC, restoration (deterministic first, generative gated), review UI.
 - **Agent layer** — an external LLM drives the same surface via MCP. It can
   read measurements, *see* frames (`get_shot_still`/`get_shot_frame` return
   real images), regroup faces, adjust skin samples, tune corrections, and
@@ -91,7 +106,7 @@ record reasoning.
 .venv/bin/python -m pytest
 ```
 
-250 tests, including exhaustive SMPTE drop-frame round-trips, real
+288 tests, including exhaustive SMPTE drop-frame round-trips, real
 ffmpeg-encoded fixtures, and end-to-end pipeline + MCP checks. Tests that need
 `ffmpeg` skip automatically when it's absent.
 

@@ -35,8 +35,8 @@ ffmpeg-encoded fixtures. Keep them green.
 ```
 src/colorai/
   __init__.py        version
-  cli.py             argparse entry point (colorai analyze / ui / db)
-  ingest.py          probe + register a master
+  cli.py             argparse entry point (colorai analyze / render / ui / db / mcp)
+  ingest.py          probe + register a master (source identity + hash)
   media/probe.py     ffprobe -> MediaAsset metadata
   shotdetect.py      PySceneDetect -> inclusive shot bounds
   frames.py          representative still selection + extraction
@@ -45,15 +45,20 @@ src/colorai/
   skin_analysis.py   per-subject skin-tone matching
   tracking.py        temporal face tracking + mask propagation
   anomaly.py         deterministic blur-pulse / anomaly detection
+  qc.py              flicker / clipping / blank-frame temporal QC
+  color.py           BT.709 <-> linear transfer + working-space handling
   correction.py      deterministic correction transforms + preview
+  render.py          full-master export (apply approved corrections)
+  editorial.py       review state, exceptions, grouping, split/merge
   face.py            YuNet detection + SFace identity + skin sampling
   skin.py            color-only skin heuristic (experiment)
   restoration.py     deterministic recovery + generative boundary
-  pipeline.py        analyze_master orchestration
-  ui.py              FastAPI review app + correction/analysis API
+  generative.py      RIFE + LaMa ONNX loader + status surface
+  pipeline.py        analyze_master orchestration (resumable)
+  ui.py              FastAPI review app + correction/analysis/editorial API
   mcp_server.py      MCP server for agent integration (colorai mcp)
   core/timecode.py   SMPTE timecode <-> frame conversion
-  project/models.py  SQLAlchemy model (Project/Asset/Shot/...)
+  project/models.py  SQLAlchemy model (Project/Asset/Shot/Group/...)
   project/store.py   ProjectStore + construction helpers
   templates/         Jinja2 UI templates
   models/            bundled ONNX models (YuNet)
@@ -100,8 +105,17 @@ docs/                architecture, status, audit, research notes
 
 ## Current gaps (do not assume they exist)
 
-- Install/bundle the generative models (RIFE + LaMa ONNX) and wire the loader
-  (`docs/research-notes.md`); deterministic recovery is complete.
+- Bundle the generative model files themselves (RIFE + LaMa ONNX). The loader
+  and status surface are wired (`generative.py`); the models are not committed
+  (large, gitignored) — see `docs/research-notes.md` for acquisition.
+- Per-model RIFE/LaMa inference I/O (pre/post-processing) — it depends on the
+  exact ONNX export contract of the chosen checkpoint, so it lands with the
+  model files.
+- OCIO / LUT / curve support for non-Rec.709 masters (working space is fixed
+  BT.709 for now).
+- Rolling-shutter detection (needs camera-motion priors).
+- Long-form/GPU acceleration for full-master render (the Python streaming path
+  is correctness-first, not fast).
 - Any future schema change needs a new Alembic revision (machinery exists).
 
 ## Schema migrations

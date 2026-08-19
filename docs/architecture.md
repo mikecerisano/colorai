@@ -106,8 +106,9 @@ changes should add a migration.
 `src/colorai/pipeline.py`, non-destructively:
 
 1. **Ingest** (`media/probe.py`, `ingest.py`) — ffprobe the master, register a
-   `MediaAsset`. Frame rate is parsed from the exact rational
-   (`avg_frame_rate`), so 29.97 is detected correctly for drop-frame.
+   `MediaAsset`, and record a fast content fingerprint (`source_hash`). Frame
+   rate is parsed from the exact rational (`avg_frame_rate`), so 29.97 is
+   detected correctly for drop-frame.
 2. **Shot detection** (`shotdetect.py`) — PySceneDetect `ContentDetector`;
    scene list is converted from PySceneDetect's 0-based half-open intervals to
    ColorAI's inclusive bounds and persisted with derived timecodes.
@@ -117,7 +118,13 @@ changes should add a migration.
    `ffmpeg -vf select=eq(n\,N)` and recorded.
 4. **Metrics** (`metrics.py`) — image statistics and a sharpness score are
    computed from each still and persisted.
-5. The asset is marked `analyzed`.
+5. The asset is marked `analyzed` (with the detection parameters used).
+
+`analyze_master` is **resumable and editing-aware**: an unchanged, already-
+analyzed master returns its cached results; if the asset already has shots
+(e.g. after a manual split/merge), detection is skipped so the edit survives,
+and only missing stills/metrics/skin are re-derived. `resume=False` forces
+shot detection from scratch.
 
 `colorai ui` serves `src/colorai/ui.py`: a review screen with one card per
 shot (still, timecode range, metrics) and a small JS layer that drives the
@@ -162,10 +169,33 @@ to human-editable `Subject` rows, and each subject is compared against its own
 reference (hero shot or median) — so two different people are never pulled
 toward each other.
 
+## Export and editorial
+
+`colorai render` (`src/colorai/render.py`) is the export path: it decodes the
+master to raw RGB, applies each shot's *enabled* corrections (the same
+deterministic transform the preview shows), and encodes a new master. It is a
+correctness-first streaming pipeline; GPU/ffmpeg-native acceleration is a
+documented future optimization.
+
+`src/colorai/editorial.py` is the layer above the engine for the filmmaker's
+judgment: per-shot `review_status` (pending/approved/rejected) and `excused`
+(intentional-exception) flags; `ShotGroup` scene/camera-family grouping; and
+manual `split_shot` / `merge_shots` that copy corrections and renumber shots.
+Structural edits reset the asset to `registered` so the next `analyze`
+re-derives stills/metrics/skin for the edited shots without re-detecting. The
+outlier detector (`analysis.find_outliers`) skips excused shots.
+
+`src/colorai/qc.py` adds temporal measurements: frame-to-frame flicker,
+per-shot clipped highlights / crushed blacks (from stored luma percentiles),
+and blank / duplicate damaged-frame signatures, alongside the blur-pulse
+detector in `anomaly.py`. Rolling shutter is deferred (needs camera-motion
+priors).
+
 Generative restoration is **not** a `Correction` kind. It is reserved for
 genuinely damaged temporal intervals and is modeled separately — see
 `src/colorai/restoration.py` for the deterministic tier and the approval-gated
-generative boundary, and `face.py` for face-region skin sampling.
+generative boundary, and `src/colorai/generative.py` for the RIFE + LaMa ONNX
+loader and availability surface (models are not bundled).
 
 ## Agent integration (MCP)
 
