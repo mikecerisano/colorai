@@ -138,6 +138,13 @@ def test_face_review_links_each_card_to_its_marked_context(tmp_path):
     assert "openFaceContext" in body
 
 
+def test_face_context_modal_hidden_state_overrides_its_flex_layout(tmp_path):
+    client, asset, shots, alice, bob = _client(tmp_path)
+    body = client.get("/").text
+
+    assert ".modal.hidden { display:none; }" in body
+
+
 def test_multi_face_bbox_data_present(tmp_path):
     client, asset, shots, alice, bob = _client(tmp_path)
     ws = client.get(f"/api/assets/{asset.id}/workspace").json()
