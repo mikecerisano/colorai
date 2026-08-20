@@ -58,6 +58,7 @@ src/colorai/
   matching.py        group-aware subject/setup matching
   organization.py    deterministic needs-organization suggestions
   planning.py        durable organization plan (draft/validate/approve/apply)
+  face_corrections.py face-local tracked skin corrections + pure mask compositor
   face.py            YuNet detection + SFace identity + skin sampling
   nametag.py         lower-third OCR -> name suggestions (Tesseract CLI)
   skin.py            color-only skin heuristic (experiment)

@@ -701,15 +701,15 @@ def reject_reference(project: str, proposal_id: int) -> dict:
 def match_subject_setup(
     project: str, asset_id: int, subject_id: int, group_id: int | None = None, persist: bool = False
 ) -> dict:
-    """Compare a subject's shots to an approved reference within a scope.
+    """Composition-sensitive diagnostic: compare a subject's whole-frame
+    measurements to an approved reference within a scope.
 
-    Scope is ``subject × setup group`` (optionally the group's camera label).
-    Requires an approved reference; returns an explanatory error otherwise.
-    Whole-frame proposals are deterministic, include reference + group context,
-    and are persisted **disabled** (never auto-applied) when ``persist=True``.
-    Face-derived ``skin_corrections`` are **report-only** — they need a
-    tracked, feathered face mask before they can be applied, and are never
-    persisted as whole-frame grades.
+    This is NOT the primary skin-matching workflow — whole-frame comparisons
+    ignore windows/background/framing. Use ``skin_first_match_subject_setup``
+    for face-local skin matching. Requires an approved reference; returns an
+    explanatory error otherwise. Whole-frame proposals are deterministic,
+    include reference + group context, and are persisted **disabled** when
+    ``persist=True``. Face-derived ``skin_corrections`` are report-only.
     """
     from colorai.matching import match_subject_in_group
 

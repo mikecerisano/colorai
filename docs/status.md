@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 429 tests passing.
+Current progress. 454 tests passing.
 
 ## Done
 
@@ -111,7 +111,23 @@ Current progress. 429 tests passing.
   group context and persist **disabled**. Global median matching remains an
   explicit diagnostic, not the default. ``matching_workspace`` (MCP) returns
   the structured view: subjects, setup groups, member shots, metrics, skin
-  samples, references, and review state.
+  samples, references, and review state. Whole-frame ``match_subject_setup``
+  is labelled **composition-sensitive diagnostic** — it is never the primary
+  skin-matching workflow.
+- **Skin-first multicamera matching** — the primary finishing path for the
+  same person across camera angles. Persisted `FaceTrack` rows (normalized
+  box keyframes, coverage/max-gap/stability, state) and `FaceCorrection` rows
+  (separate from whole-frame `Correction`, ``suggested``/``approved``/
+  ``rejected`` + disabled-by-default) drive a conservative face-local layer.
+  Version one is `rgb_balance` only, linear-light gains clamped to
+  ``[0.90, 1.10]``. `face_corrections.py` exposes `build_face_track` and the
+  pure `apply_face_corrections(frame, specs, frame_index)` compositor (mask
+  feathering, face-oval falloff, stable-order alpha compositing) shared by
+  preview and `render.py`; render aborts before output if an enabled face
+  correction is invalid. MCP drafts/inspects/validates only (`skin_matching_
+  workspace`, `build_face_track`, `get_face_track_contact_sheet`,
+  `skin_first_match_subject_setup`, `propose/list/get/update_face_correction`);
+  approve/enable/reject are human review-UI actions only.
 - **Approved lighting variants** — a setup family can hold ``variant`` child
   groups (``ShotGroup.parent_id``) for real natural-light changes across an
   interview. Each variant gets its own approved reference (approving a variant
@@ -230,7 +246,7 @@ Current progress. 429 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 429 tests across timecode, project model, migrations (incl. legacy
+- 454 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
   auto-assignment), correction, LUT/curve, render, resumability, editorial,
   references, matching (incl. variants), analysis, face (incl. bbox), skin,
