@@ -250,3 +250,72 @@ def test_build_face_track_fails_on_excessive_gap():
     track = build_face_track(store, metric.id, samples=16, scale=480, extract=_fake_extract(None), detect=sparse_detect)
     assert track.state == "failed"
     assert "gap" in track.failure_reason
+
+
+def test_preview_applies_face_correction_via_shared_compositor(tmp_path):
+    from colorai.correction import load_corrected_still
+    from colorai.face_corrections import (
+        approve_face_correction,
+        enable_face_correction,
+        propose_face_correction,
+    )
+    from colorai.project import (
+        FaceTrack,
+        ProjectStore,
+        make_representative_frame,
+        make_shots,
+    )
+
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("preview face")
+    asset = store.add_asset(project.id, source_path="/media/m.mov", frame_rate=25.0, width=64, height=64)
+    shots = make_shots(asset, [(0, 9)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        for s in shots:
+            session.refresh(s)
+    shot = shots[0]
+    alice = create_subject(store, asset.id, "Alice")
+
+    with store.session() as session:
+        metric = SkinMetric(
+            shot_id=shot.id, face_index=0,
+            mean_b=0.30, mean_g=0.30, mean_r=0.50,
+            sample_pixels=100, subject_id=alice.id,
+            bbox_x=16, bbox_y=16, bbox_w=32, bbox_h=32,
+        )
+        session.add(metric)
+        session.flush()
+        track = FaceTrack(
+            shot_id=shot.id, skin_metric_id=metric.id, subject_id=alice.id,
+            source_width=64, source_height=64, analysis_scale=64,
+            keyframes=[[0, 0.25, 0.25, 0.5, 0.5], [9, 0.25, 0.25, 0.5, 0.5]],
+            sample_count=2, tracked_count=2, coverage=1.0, max_gap=0.0,
+            skin_stability=0.01, median_bgr=[0.30, 0.30, 0.50], state="valid",
+        )
+        session.add(track)
+        session.flush()
+        metric_id, track_id = metric.id, track.id
+
+        still = tmp_path / "still.png"
+        img = np.zeros((64, 64, 3), dtype=np.uint8)
+        img[:, :] = (0, 128, 0)  # green background (RGB)
+        img[16:48, 16:48] = (_skin_bgr()[2], _skin_bgr()[1], _skin_bgr()[0])  # skin (RGB)
+        cv2.imwrite(str(still), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        session.add(make_representative_frame(shot, 0, image_path=str(still), frame_rate=25.0))
+        session.commit()
+
+    c = propose_face_correction(
+        store, shot_id=shot.id, subject_id=alice.id, skin_metric_id=metric_id,
+        face_track_id=track_id, reference_shot_id=shot.id, reference_group_id=None,
+        reason="warm", confidence=0.8, classification="skin_mismatch",
+        gain=(1.10, 1.0, 1.0),
+    )
+    approve_face_correction(store, c.id)
+    enable_face_correction(store, c.id)
+
+    out_bgr = load_corrected_still(store, shot)
+    out = cv2.cvtColor(out_bgr, cv2.COLOR_BGR2RGB)
+    assert not (out[20:40, 20:40] == img[20:40, 20:40]).all()  # skin changed
+    assert (out[0:8, 0:8] == img[0:8, 0:8]).all()  # background unchanged

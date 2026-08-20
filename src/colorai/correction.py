@@ -362,6 +362,7 @@ def load_corrected_still(
             .all()
         )
         still_path = rf.image_path
+        frame_index = rf.frame_index
 
     path = Path(still_path)
     if not path.is_absolute() and base_dir is not None:
@@ -371,6 +372,16 @@ def load_corrected_still(
         raise ValueError(f"cannot read still: {str(path)!r}")
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     corrected = apply_corrections(rgb, corrections)  # uint8 RGB out for uint8 in
+
+    # Face-local layer: same persisted track/mask compositor as full render.
+    from colorai.face_corrections import (
+        apply_face_corrections,
+        load_face_correction_specs,
+    )
+
+    face_specs = load_face_correction_specs(store, shot.id)
+    if face_specs:
+        corrected = apply_face_corrections(corrected, face_specs, frame_index)
     return cv2.cvtColor(corrected, cv2.COLOR_RGB2BGR)
 
 

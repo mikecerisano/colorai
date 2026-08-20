@@ -73,6 +73,59 @@ def test_corrections_for_frame_empty():
     assert corrections_for_frame(0, []) == ()
 
 
+def test_render_aborts_on_invalid_enabled_face_correction(tmp_path):
+    from colorai.face_corrections import ValidationError
+    from colorai.project import FaceCorrection, FaceTrack, SkinMetric
+    from colorai.skin_analysis import create_subject
+
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("render face")
+    asset = store.add_asset(
+        project.id, source_path="/media/m.mov", frame_rate=25.0, width=64, height=64
+    )
+    shots = make_shots(asset, [(0, 9)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        for s in shots:
+            session.refresh(s)
+    shot = shots[0]
+    alice = create_subject(store, asset.id, "Alice")
+    with store.session() as session:
+        metric = SkinMetric(
+            shot_id=shot.id, face_index=0, mean_b=0.3, mean_g=0.3, mean_r=0.5,
+            sample_pixels=10, subject_id=alice.id,
+            bbox_x=16, bbox_y=16, bbox_w=32, bbox_h=32,
+        )
+        session.add(metric)
+        session.flush()
+        track = FaceTrack(
+            shot_id=shot.id, skin_metric_id=metric.id, subject_id=alice.id,
+            source_width=64, source_height=64, analysis_scale=64,
+            keyframes=[[0, 0.25, 0.25, 0.5, 0.5], [9, 0.25, 0.25, 0.5, 0.5]],
+            sample_count=2, tracked_count=2, coverage=1.0, max_gap=0.0,
+            skin_stability=0.01, median_bgr=[0.3, 0.3, 0.5], state="valid",
+        )
+        session.add(track)
+        session.flush()
+        # Enabled but NOT approved -> must abort render before output.
+        session.add(
+            FaceCorrection(
+                shot_id=shot.id, subject_id=alice.id, skin_metric_id=metric.id,
+                face_track_id=track.id, kind="rgb_balance",
+                parameters={"gain": [1.0, 1.0, 1.0]},
+                reason="bad", classification="skin_mismatch",
+                state="suggested", enabled=True,
+            )
+        )
+        session.commit()
+
+    out = tmp_path / "should_not_exist.mp4"
+    with pytest.raises(ValidationError):
+        render_master(store, asset.id, out)
+    assert not out.exists()
+
+
 @requires_ffmpeg
 def test_render_master_applies_offset_to_black_shot(tmp_path):
     # 50 frames: 25 black, 25 white at 25 fps.

@@ -58,10 +58,11 @@ class ShotSpan:
     start_frame: int
     end_frame: int  # inclusive
     corrections: tuple[tuple[str, dict], ...]
+    shot_id: int
 
 
 def build_shot_spans(store: ProjectStore, asset_id: int) -> list[ShotSpan]:
-    """Build ordered, non-overlapping ``(start, end, corrections)`` spans for an asset.
+    """Build ordered, non-overlapping ``(start, end, corrections, shot_id)`` spans.
 
     Only *enabled* corrections are included (the same rule the preview uses).
     Shots are returned in frame order; gaps between shots are left uncorrected
@@ -93,6 +94,7 @@ def build_shot_spans(store: ProjectStore, asset_id: int) -> list[ShotSpan]:
                     (c.kind, c.parameters)
                     for c in corrections_by_shot.get(shot.id, ())
                 ),
+                shot.id,
             )
         )
     return spans
@@ -108,6 +110,16 @@ def corrections_for_frame(
         if span.start_frame > frame_index:
             break
     return ()
+
+
+def shot_for_frame(frame_index: int, spans: list[ShotSpan]) -> int | None:
+    """Return the shot id covering ``frame_index``, or ``None`` in gaps."""
+    for span in spans:
+        if span.start_frame <= frame_index <= span.end_frame:
+            return span.shot_id
+        if span.start_frame > frame_index:
+            break
+    return None
 
 
 def _tag(value: str | None) -> str:
@@ -217,6 +229,16 @@ def render_master(
         expected_frames = asset.frame_count
 
     spans = build_shot_spans(store, asset_id)
+
+    # Preflight every enabled face correction before any output is produced.
+    # Raises ValidationError (aborting render) on an invalid enabled grade.
+    from colorai.face_corrections import (
+        apply_face_corrections,
+        load_face_correction_specs_by_asset,
+    )
+
+    face_specs_by_shot = load_face_correction_specs_by_asset(store, asset_id)
+
     frame_bytes = width * height * 3
     destination = Path(out_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -255,6 +277,10 @@ def render_master(
             corrections = corrections_for_frame(frame_index, spans)
             if corrections:
                 frame = apply_corrections(frame, corrections)
+            shot_id = shot_for_frame(frame_index, spans)
+            face_specs = face_specs_by_shot.get(shot_id)
+            if face_specs:
+                frame = apply_face_corrections(frame, face_specs, frame_index)
             encoder.stdin.write(frame.tobytes())
             frame_index += 1
             if progress is not None:

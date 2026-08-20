@@ -525,11 +525,31 @@ def load_face_correction_specs(
                 FaceCorrectionSpec(
                     id=c.id,
                     gain=gain,
-                    keyframes=tuple(
-                        tuple(k) for k in (track.keyframes or [])
-                    ),
+                    keyframes=tuple(tuple(k) for k in (track.keyframes or [])),
                     source_width=track.source_width,
                     source_height=track.source_height,
                 )
             )
         return specs
+
+
+def load_face_correction_specs_by_asset(
+    store: ProjectStore, asset_id: int
+) -> dict[int, list[FaceCorrectionSpec]]:
+    """Map every shot of an asset to its enabled face-correction specs.
+
+    Validates every enabled correction (raises ``ValidationError``) so render
+    can abort before producing any output on an invalid grade.
+    """
+    from colorai.project.models import Shot
+
+    with store.session() as session:
+        shot_ids = [
+            s.id for s in session.query(Shot).filter_by(asset_id=asset_id).all()
+        ]
+    result: dict[int, list[FaceCorrectionSpec]] = {}
+    for sid in shot_ids:
+        specs = load_face_correction_specs(store, sid)
+        if specs:
+            result[sid] = specs
+    return result
