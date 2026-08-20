@@ -217,6 +217,61 @@ def test_normalized_track_maps_to_preview_dimensions():
     assert (out[0:16, 0:16] == img[0:16, 0:16]).all()  # region above box untouched
 
 
+# -- skin_appearance compositor ----------------------------------------------
+
+def _skin_appearance_params(offset=(-0.02, 0.0)):
+    return {
+        "version": 1, "space": "oklab", "luma_mode": "preserve",
+        "ab_offset": list(offset), "ab_scale": [1.0, 1.0], "strength": 1.0,
+        "mask_strategy": "landmark_skin",
+    }
+
+
+def _two_face_image():
+    img = np.zeros((96, 96, 3), dtype=np.uint8)
+    img[:, :] = (0, 128, 0)  # green background (RGB)
+    bgr = _skin_bgr()
+    rgb = (bgr[2], bgr[1], bgr[0])
+    img[8:72, 16:72] = rgb    # participant A (selected)
+    img[40:56, 80:96] = rgb   # participant B (outside A's box)
+    return img
+
+
+def _two_face_geometry():
+    oval = [[0.167, 0.083], [0.75, 0.083], [0.78, 0.4], [0.75, 0.75], [0.167, 0.75], [0.14, 0.4]]
+    left_eye = [[0.25, 0.22], [0.42, 0.22], [0.42, 0.40], [0.25, 0.40]]
+    lips = [[0.38, 0.60], [0.62, 0.60], [0.62, 0.75], [0.38, 0.75]]
+    return {"oval": oval, "eyes": [left_eye], "brows": [], "lips": [lips], "hairline": []}
+
+
+def test_skin_appearance_changes_cheek_but_not_eye_lip_or_second_face():
+    image = _two_face_image()
+    spec = FaceCorrectionSpec(
+        id=1,
+        kind="skin_appearance",
+        parameters=_skin_appearance_params(offset=(-0.02, 0.0)),
+        keyframes=((0, 0.1667, 0.0833, 0.5833, 0.6667),),
+        mask_geometry_keyframes=((0, _two_face_geometry()),),
+        source_width=96, source_height=96,
+    )
+    out = apply_face_corrections(image, [spec], frame_index=0)
+    assert not np.array_equal(out[48, 40], image[48, 40])  # cheek changed
+    assert np.array_equal(out[30, 32], image[30, 32])      # eye protected
+    assert np.array_equal(out[65, 48], image[65, 48])      # lip protected
+    assert np.array_equal(out[48, 80], image[48, 80])      # other participant
+    assert np.array_equal(out[4, 4], image[4, 4])          # background
+
+
+def test_derive_zero_strength_yields_identity_parameters():
+    from colorai.skin_appearance import derive_skin_appearance_parameters
+
+    candidate = {"mean_ab": [0.03, 0.02], "spread_ab": [0.02, 0.02]}
+    target = {"mean_ab": [0.0, 0.0], "spread_ab": [0.05, 0.05]}
+    params = derive_skin_appearance_parameters(candidate, target, strength=0.0)
+    assert params.ab_offset == (0.0, 0.0)
+    assert params.ab_scale == (1.0, 1.0)
+
+
 # -- track builder -----------------------------------------------------------
 
 from colorai.face_corrections import build_face_track

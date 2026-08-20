@@ -170,6 +170,91 @@ def test_render_preflight_rejects_fractional_frame_index(tmp_path):
     assert not out.exists()
 
 
+def _enabled_skin_appearance_store(tmp_path, *, mask_review_state):
+    """A store with one enabled ``skin_appearance`` correction whose mask track
+    is in ``mask_review_state``."""
+    from colorai.editorial import assign_shot_group, create_group
+    from colorai.project import FaceCorrection, FaceMaskTrack, FaceTrack, SkinAppearanceTarget, SkinMetric
+    from colorai.skin_analysis import create_subject
+
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("render skin appearance")
+    asset = store.add_asset(
+        project.id, source_path="/media/m.mov", frame_rate=25.0, width=64, height=64
+    )
+    shots = make_shots(asset, [(0, 9)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        for s in shots:
+            session.refresh(s)
+    shot = shots[0]
+    alice = create_subject(store, asset.id, "Alice")
+    group = create_group(store, asset.id, "interview", kind="setup")
+    assign_shot_group(store, shot.id, group.id)
+    with store.session() as session:
+        metric = SkinMetric(
+            shot_id=shot.id, face_index=0, mean_b=0.3, mean_g=0.3, mean_r=0.5,
+            sample_pixels=10, subject_id=alice.id,
+            bbox_x=16, bbox_y=16, bbox_w=32, bbox_h=32,
+        )
+        session.add(metric)
+        session.flush()
+        track = FaceTrack(
+            shot_id=shot.id, skin_metric_id=metric.id, subject_id=alice.id,
+            source_width=64, source_height=64, analysis_scale=64,
+            keyframes=[[0, 0.25, 0.25, 0.5, 0.5], [9, 0.25, 0.25, 0.5, 0.5]],
+            sample_count=2, tracked_count=2, coverage=1.0, max_gap=0.0,
+            skin_stability=0.01, median_bgr=[0.3, 0.3, 0.5], state="valid",
+        )
+        session.add(track)
+        session.flush()
+        mask = FaceMaskTrack(
+            face_track_id=track.id, shot_id=shot.id, subject_id=alice.id,
+            backend="fallback", backend_version="0", strategy="face_oval_skin",
+            landmark_keyframes=[[0, {"oval": [[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]], "eyes": [], "brows": [], "lips": [], "hairline": []}]],
+            coverage=1.0, max_gap=0.0, review_state=mask_review_state,
+        )
+        session.add(mask)
+        session.flush()
+        target = SkinAppearanceTarget(
+            subject_id=alice.id, group_id=group.id, reference_id=None,
+            profile={"mean_ab": [0.0, 0.0], "spread_ab": [0.01, 0.01]},
+            approved_preview_parameters={}, state="approved",
+        )
+        session.add(target)
+        session.flush()
+        session.add(
+            FaceCorrection(
+                shot_id=shot.id, subject_id=alice.id, skin_metric_id=metric.id,
+                face_track_id=track.id, skin_target_id=target.id,
+                reference_group_id=group.id,
+                kind="skin_appearance",
+                parameters={
+                    "version": 1, "space": "oklab", "luma_mode": "preserve",
+                    "ab_offset": [-0.01, 0.0], "ab_scale": [1.0, 1.0], "strength": 0.5,
+                },
+                reason="test", classification="skin_mismatch",
+                state="approved", enabled=True,
+            )
+        )
+        session.commit()
+    return store, asset
+
+
+def test_enabled_skin_appearance_requires_reviewed_mask_before_output(tmp_path):
+    from colorai.face_corrections import ValidationError
+
+    store, asset = _enabled_skin_appearance_store(
+        tmp_path, mask_review_state="unreviewed"
+    )
+    out = tmp_path / "out.mp4"
+    with pytest.raises(ValidationError, match="approved_for_proposal"):
+        render_master(store, asset.id, out)
+    assert not out.exists()
+
+
+
 @requires_ffmpeg
 def test_render_master_applies_offset_to_black_shot(tmp_path):
     # 50 frames: 25 black, 25 white at 25 fps.

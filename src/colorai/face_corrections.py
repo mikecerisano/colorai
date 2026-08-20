@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -26,10 +26,12 @@ import numpy as np
 
 from colorai.color import bt709_to_linear, linear_to_bt709
 from colorai.face import detect_faces, skin_metrics_in_region
+from colorai.face_masks import interpolate_mask_geometry, render_face_mask
 from colorai.frames import extract_frame
 from colorai.project.models import FaceCorrection, FaceTrack, MediaAsset, Shot, SkinMetric
 from colorai.project.store import ProjectStore
 from colorai.skin import skin_mask
+from colorai.skin_appearance import apply_skin_appearance, validate_skin_appearance_parameters
 from colorai.tracking import match_box, sample_frames, temporal_skin_metrics
 
 # Conservative finishing bounds.
@@ -42,13 +44,22 @@ SKIN_STABILITY_THRESHOLD = 0.05
 
 @dataclass(frozen=True)
 class FaceCorrectionSpec:
-    """A persisted face correction ready for the pure compositor."""
+    """A persisted face correction ready for the pure compositor.
+
+    ``kind`` is ``rgb_balance`` (legacy ``gain``) or ``skin_appearance`` (a
+    versioned OKLab chroma transform under a reviewed temporal face mask).
+    ``keyframes`` are the tracked box; ``mask_geometry_keyframes`` carry the
+    normalized landmark geometry for ``skin_appearance``.
+    """
 
     id: int
-    gain: tuple[float, float, float]
-    keyframes: tuple[tuple[int, float, float, float, float], ...]
-    source_width: int
-    source_height: int
+    kind: str = "rgb_balance"
+    parameters: dict = field(default_factory=dict)
+    keyframes: tuple[tuple[int, float, float, float, float], ...] = ()
+    mask_geometry_keyframes: tuple[tuple[int, dict], ...] = ()
+    source_width: int = 0
+    source_height: int = 0
+    gain: tuple[float, float, float] | None = None
 
 
 def validate_gain(gain: Sequence[float]) -> tuple[float, float, float]:
@@ -138,10 +149,12 @@ def apply_face_corrections(
     corrections: Sequence[FaceCorrectionSpec],
     frame_index: int,
 ) -> np.ndarray:
-    """Apply masked ``rgb_balance`` corrections to one frame (pure).
+    """Apply masked face corrections to one frame (pure).
 
-    ``corrections`` are applied in stable ``id`` order. Later masks only fill
-    pixels their alpha has not already covered.
+    Supports ``rgb_balance`` (legacy per-channel linear gains) and
+    ``skin_appearance`` (a reviewed OKLab chroma transform under a temporal
+    landmark mask). Corrections are applied in stable ``id`` order; later masks
+    only fill pixels their alpha has not already covered.
     """
     if not corrections:
         return image_rgb
@@ -163,21 +176,45 @@ def apply_face_corrections(
             continue
 
         region = base[y0:y1, x0:x1]
+        region_h, region_w = region.shape[:2]
         # Skin mask is color-based and expects BGR uint8.
         region_bgr = cv2.cvtColor(
             (np.clip(region, 0, 1) * 255.0).round().astype(np.uint8), cv2.COLOR_RGB2BGR
         )
-        alpha = _soft_mask(region_bgr)  # HxW float
+        color_alpha = _soft_mask(region_bgr)  # HxW float
+
+        if spec.kind == "skin_appearance":
+            geometry = interpolate_mask_geometry(spec.mask_geometry_keyframes, frame_index)
+            strategy = spec.parameters.get("mask_strategy", "landmark_skin")
+            # Landmark geometry is normalized to the source frame; render it at
+            # the current input size (so preview scaling stays correct) and crop
+            # the same region as the colour mask.
+            full_mask = render_face_mask((h, w), geometry, strategy=strategy)
+            landmark_alpha = full_mask[y0:y1, x0:x1]
+            alpha = color_alpha * landmark_alpha
+        else:
+            alpha = color_alpha
+
         # Alpha not already claimed by an earlier (lower id) correction.
         remaining = np.clip(alpha - covered[y0:y1, x0:x1], 0.0, 1.0)
         if not remaining.any():
             continue
 
-        gain = np.asarray(spec.gain, dtype=np.float64)
-        linear = bt709_to_linear(region)
-        corrected = linear_to_bt709(np.clip(linear * gain, 0.0, None))
-        blended = region * (1.0 - remaining[..., None]) + corrected * remaining[..., None]
-        base[y0:y1, x0:x1] = blended
+        if spec.kind == "skin_appearance":
+            params = validate_skin_appearance_parameters(spec.parameters)
+            linear = bt709_to_linear(region)
+            corrected = linear_to_bt709(apply_skin_appearance(linear, params, remaining))
+            base[y0:y1, x0:x1] = corrected
+        else:
+            gain = np.asarray(
+                spec.gain if spec.gain is not None else spec.parameters.get("gain"),
+                dtype=np.float64,
+            )
+            linear = bt709_to_linear(region)
+            corrected = linear_to_bt709(np.clip(linear * gain, 0.0, None))
+            blended = region * (1.0 - remaining[..., None]) + corrected * remaining[..., None]
+            base[y0:y1, x0:x1] = blended
+
         covered[y0:y1, x0:x1] = np.maximum(covered[y0:y1, x0:x1], alpha)
 
     if was_uint8:
@@ -316,19 +353,74 @@ class ValidationError(ValueError):
     """A face correction is invalid for preview/render."""
 
 
+def _validate_skin_appearance_scope(session, correction, shot) -> None:
+    """Validate the reviewed mask track and approved target for a skin_appearance."""
+    from colorai.project.models import FaceMaskTrack, SkinAppearanceTarget
+
+    if correction.face_track_id is None:
+        raise ValidationError(f"face correction {correction.id} has no face track")
+    mask = (
+        session.query(FaceMaskTrack)
+        .filter_by(face_track_id=correction.face_track_id)
+        .order_by(FaceMaskTrack.id.desc())
+        .first()
+    )
+    if mask is None:
+        raise ValidationError(f"face correction {correction.id} has no face mask track")
+    if mask.state != "valid":
+        raise ValidationError(f"face correction {correction.id} mask track is not valid")
+    if mask.review_state != "approved_for_proposal":
+        raise ValidationError(
+            f"face correction {correction.id} mask track must be reviewed "
+            f"'approved_for_proposal' (currently {mask.review_state!r})"
+        )
+    if mask.coverage < MIN_COVERAGE:
+        raise ValidationError(f"face correction {correction.id} mask coverage below threshold")
+    if mask.max_gap > MAX_GAP_RATIO:
+        raise ValidationError(f"face correction {correction.id} mask gap exceeds threshold")
+
+    if correction.skin_target_id is None:
+        raise ValidationError(f"face correction {correction.id} has no skin target")
+    target = session.get(SkinAppearanceTarget, correction.skin_target_id)
+    if target is None:
+        raise ValidationError(f"face correction {correction.id} skin target is missing")
+    if target.state != "approved":
+        raise ValidationError(
+            f"face correction {correction.id} skin target is not approved ({target.state!r})"
+        )
+    if target.subject_id != correction.subject_id:
+        raise ValidationError(f"face correction {correction.id} skin target subject mismatch")
+    if correction.reference_group_id is not None and target.group_id != correction.reference_group_id:
+        raise ValidationError(f"face correction {correction.id} skin target group scope mismatch")
+    if target.subject_id is not None:
+        from colorai.project.models import Subject
+
+        subject = session.get(Subject, target.subject_id)
+        if subject is None or subject.asset_id != shot.asset_id:
+            raise ValidationError(f"face correction {correction.id} skin target subject/asset mismatch")
+
+
 def _validate_face_correction_row(session, correction) -> None:
     """Raise ``ValidationError`` if an enabled correction is unusable."""
     from colorai.project.models import FaceTrack, Shot, SkinMetric, Subject
 
     if correction.state != STATE_APPROVED:
         raise ValidationError(f"face correction {correction.id} is not approved")
-    if correction.kind != "rgb_balance":
+    if correction.kind not in ("rgb_balance", "skin_appearance"):
         raise ValidationError(f"unsupported face correction kind {correction.kind!r}")
-    gain = correction.parameters.get("gain") if correction.parameters else None
-    try:
-        validate_gain(gain)
-    except ValueError as exc:
-        raise ValidationError(f"face correction {correction.id} has invalid gain: {exc}")
+    if correction.kind == "rgb_balance":
+        gain = correction.parameters.get("gain") if correction.parameters else None
+        try:
+            validate_gain(gain)
+        except ValueError as exc:
+            raise ValidationError(f"face correction {correction.id} has invalid gain: {exc}")
+    else:
+        try:
+            validate_skin_appearance_parameters(correction.parameters or {})
+        except ValueError as exc:
+            raise ValidationError(
+                f"face correction {correction.id} has invalid skin_appearance parameters: {exc}"
+            )
     if correction.face_track_id is None:
         raise ValidationError(f"face correction {correction.id} has no face track")
     track = session.get(FaceTrack, correction.face_track_id)
@@ -384,6 +476,9 @@ def _validate_face_correction_row(session, correction) -> None:
         subject = session.get(Subject, correction.subject_id)
         if subject is None or subject.asset_id != shot.asset_id:
             raise ValidationError(f"face correction {correction.id} subject/asset mismatch")
+
+    if correction.kind == "skin_appearance":
+        _validate_skin_appearance_scope(session, correction, shot)
 
 
 def propose_face_correction(
@@ -601,7 +696,7 @@ def load_face_correction_specs(
     persisted track/mask and compositing code. Raises ``ValidationError`` for
     any invalid enabled correction (render preflight).
     """
-    from colorai.project.models import FaceTrack
+    from colorai.project.models import FaceMaskTrack, FaceTrack
 
     with store.session() as session:
         rows = (
@@ -614,16 +709,40 @@ def load_face_correction_specs(
         for c in rows:
             _validate_face_correction_row(session, c)
             track = session.get(FaceTrack, c.face_track_id)
-            gain = tuple(float(v) for v in c.parameters["gain"])
-            specs.append(
-                FaceCorrectionSpec(
-                    id=c.id,
-                    gain=gain,
-                    keyframes=tuple(tuple(k) for k in (track.keyframes or [])),
-                    source_width=track.source_width,
-                    source_height=track.source_height,
+            keyframes = tuple(tuple(k) for k in (track.keyframes or []))
+            if c.kind == "skin_appearance":
+                mask = (
+                    session.query(FaceMaskTrack)
+                    .filter_by(face_track_id=c.face_track_id)
+                    .order_by(FaceMaskTrack.id.desc())
+                    .first()
                 )
-            )
+                parameters = dict(c.parameters or {})
+                parameters["mask_strategy"] = mask.strategy
+                specs.append(
+                    FaceCorrectionSpec(
+                        id=c.id,
+                        kind=c.kind,
+                        parameters=parameters,
+                        keyframes=keyframes,
+                        mask_geometry_keyframes=tuple(
+                            (int(k[0]), k[1]) for k in (mask.landmark_keyframes or [])
+                        ),
+                        source_width=track.source_width,
+                        source_height=track.source_height,
+                    )
+                )
+            else:
+                gain = tuple(float(v) for v in c.parameters["gain"])
+                specs.append(
+                    FaceCorrectionSpec(
+                        id=c.id,
+                        gain=gain,
+                        keyframes=keyframes,
+                        source_width=track.source_width,
+                        source_height=track.source_height,
+                    )
+                )
         return specs
 
 
