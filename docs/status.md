@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 405 tests passing.
+Current progress. 425 tests passing.
 
 ## Done
 
@@ -162,6 +162,23 @@ Current progress. 405 tests passing.
   `restore` / `send_to_broll` / `restore_broll`). The B-roll pile is a generic
   editorial group, deliberately excluded from setup matching. See
   `colorai/organization.py`.
+- **Durable organization plan** — a vision agent can draft a complete,
+  reviewable editorial organization before any shot is changed. The plan
+  layer (`OrganizationPlan` / `OrganizationPlanGroup` / `OrganizationPlanItem`)
+  is separate from live `ShotGroup`/`Shot` state: a draft gives every shot one
+  proposed destination (existing group, planned setup/variant, B-roll,
+  intentional exception, or unresolved) and never mutates the asset.
+  `colorai/planning.py` validates (variant-parent rules, one decision per
+  shot, B-roll semantics, reference scope, coverage) and applies an approved
+  plan as one transaction — invalid accepted decisions apply nothing.
+  `broll` is now an explicit `ShotGroup.kind`; matching rejects it. Exposed
+  via MCP (`organization_workspace`, `get_shot_contact_sheet`,
+  `create/get/list/update/validate/approve/apply_organization_plan`) and a
+  review-UI Organization-draft view (proposed families / B-roll / needs a
+  decision / validation & apply). Agents may draft/revise; approve and apply
+  are human-only. Group-scoped reference proposals now require an exact
+  participant and a shot inside that setup/variant with the participant's
+  face (invalid proposals fail at proposal time).
 - **Setup-first review refinement** — setup cards report their total member
   shots (including variants), and a shared multi-person setup exposes its
   participants separately. A human can choose and approve a reference for
@@ -209,7 +226,7 @@ Current progress. 405 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 405 tests across timecode, project model, migrations (incl. legacy
+- 425 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
   auto-assignment), correction, LUT/curve, render, resumability, editorial,
   references, matching (incl. variants), analysis, face (incl. bbox), skin,

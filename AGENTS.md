@@ -56,6 +56,8 @@ src/colorai/
   editorial.py       review state, exceptions, grouping, split/merge
   references.py      human-approved reference proposals
   matching.py        group-aware subject/setup matching
+  organization.py    deterministic needs-organization suggestions
+  planning.py        durable organization plan (draft/validate/approve/apply)
   face.py            YuNet detection + SFace identity + skin sampling
   nametag.py         lower-third OCR -> name suggestions (Tesseract CLI)
   skin.py            color-only skin heuristic (experiment)
