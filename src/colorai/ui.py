@@ -235,6 +235,7 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
         fc_by_subject_shot: dict[tuple, list[FaceCorrection]] = {}
         for fc in face_corrections:
             fc_by_subject_shot.setdefault((fc.subject_id, fc.shot_id), []).append(fc)
+        metric_by_id = {m.id: m for m in face_rows}
 
         approved_ref_by_scope: dict[tuple, int] = {}
         for p in proposals:
@@ -242,6 +243,8 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                 approved_ref_by_scope[(p.subject_id, p.group_id)] = p.shot_id
 
         def fc_brief(fc: FaceCorrection) -> dict:
+            track = latest_track_by_metric.get(fc.skin_metric_id)
+            metric = metric_by_id.get(fc.skin_metric_id)
             return {
                 "id": fc.id,
                 "shot_id": fc.shot_id,
@@ -251,7 +254,11 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                 "classification": fc.classification,
                 "reason": fc.reason,
                 "confidence": fc.confidence,
-                "gain": (fc.parameters or {}).get("gain"),
+                "gain_rgb": (fc.parameters or {}).get("gain"),
+                "coverage": track.coverage if track else None,
+                "stability": track.skin_stability if track else None,
+                "bbox": [metric.bbox_x, metric.bbox_y, metric.bbox_w, metric.bbox_h] if metric else None,
+                "start_tc": timecodes.get(fc.shot_id),
                 "state": fc.state,
                 "enabled": fc.enabled,
             }
@@ -268,13 +275,13 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                 if not faces_in_group:
                     continue
                 ref_shot_id = approved_ref_by_scope.get((subj.id, g.id))
+                ref_metric = next((m for m in faces_in_group if m.shot_id == ref_shot_id), None)
                 shot_count = len({m.shot_id for m in faces_in_group})
                 if shot_count < 2:
                     status = "qc_only"
                 elif ref_shot_id is None:
                     status = "needs_reference"
                 else:
-                    ref_metric = next((m for m in faces_in_group if m.shot_id == ref_shot_id), None)
                     track = latest_track_by_metric.get(ref_metric.id) if ref_metric else None
                     status = "reference_approved" if (track is not None and track.state == "valid") else "no_valid_track"
                 proposals_list: list[dict] = []
@@ -287,6 +294,7 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                         "name": subj.name,
                         "status": status,
                         "reference_shot_id": ref_shot_id,
+                        "reference_skin_metric_id": ref_metric.id if ref_metric else None,
                         "shot_count": shot_count,
                         "proposals": proposals_list,
                     }

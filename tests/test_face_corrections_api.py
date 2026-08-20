@@ -129,3 +129,11 @@ def test_html_renders_skin_matching_actions(tmp_path):
     assert "Approve correction" in body
     assert "Reject" in body
     assert "Mark intentional" in body
+    # The proposal shows temporal evidence, RGB gain, crops, context, and
+    # a local before/after comparison.
+    assert "RGB gain" in body
+    assert "cov" in body
+    assert "stab" in body
+    assert "candidate face" in body
+    assert "corrected" in body
+    assert "show box" in body

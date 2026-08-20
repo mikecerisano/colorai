@@ -269,17 +269,33 @@
             </div>
             {% if p.status == 'qc_only' %}<p class="muted">No matching target. Inspect skin QC or add a manual finishing correction.</p>{% endif %}
             {% for fc in p.proposals %}
-            <div class="corr-row {{ '' if fc.enabled else 'off' }}">
-              <span>{{ fc.classification }}</span>
-              <span class="muted">{{ fc.reason }} · conf {{ fc.confidence }}</span>
-              <span class="badge {{ fc.state }}">{{ fc.state }}{% if fc.enabled %} · enabled{% endif %}</span>
-              {% if fc.state == 'suggested' %}
-              <button type="button" onclick="faceAction({{ fc.id }}, 'approve')">Approve correction</button>
-              <button type="button" onclick="faceAction({{ fc.id }}, 'reject')">Reject</button>
-              <button type="button" onclick="faceAction({{ fc.id }}, 'mark-intentional')">Mark intentional</button>
-              {% elif fc.state == 'approved' and not fc.enabled %}
-              <button type="button" onclick="faceAction({{ fc.id }}, 'enable')">Enable</button>
-              {% endif %}
+            <div class="corr-row {{ '' if fc.enabled else 'off' }}" style="align-items:flex-start">
+              <div class="row">
+                {% if p.reference_skin_metric_id %}<img src="/api/skin_metrics/{{ p.reference_skin_metric_id }}/crop.png" alt="reference face" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--line)">{% endif %}
+                {% if fc.skin_metric_id %}<img src="/api/skin_metrics/{{ fc.skin_metric_id }}/crop.png" alt="candidate face" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--line)">{% endif %}
+                <div style="flex:1">
+                  <span>{{ fc.classification }}</span>
+                  <span class="muted">shot {{ fc.start_tc }} · conf {{ fc.confidence }} · cov {{ fc.coverage }} · stab {{ fc.stability }}</span>
+                  {% if fc.gain_rgb %}<span class="muted">RGB gain [{{ fc.gain_rgb|join(', ') }}]</span>{% endif %}
+                  <div class="muted">{{ fc.reason }}</div>
+                </div>
+                <span class="badge {{ fc.state }}">{{ fc.state }}{% if fc.enabled %} · enabled{% endif %}</span>
+              </div>
+              <div class="row" style="margin-top:0.3rem">
+                <img src="/shots/{{ fc.shot_id }}/original.png" alt="original" style="width:96px;background:#000;border:1px solid var(--line)">
+                <img src="/shots/{{ fc.shot_id }}/preview.png" alt="corrected" style="width:96px;background:#000;border:1px solid var(--line)">
+                {% if fc.bbox %}<label class="org-check"><input type="checkbox" onchange="this.parentElement.nextElementSibling.classList.toggle('hidden')"> show box</label>{% endif %}
+              </div>
+              {% if fc.bbox %}<div class="muted hidden">face box: {{ fc.bbox|join(', ') }}</div>{% endif %}
+              <div class="row" style="margin-top:0.3rem">
+                {% if fc.state == 'suggested' %}
+                <button type="button" onclick="faceAction({{ fc.id }}, 'approve')">Approve correction</button>
+                <button type="button" onclick="faceAction({{ fc.id }}, 'reject')">Reject</button>
+                <button type="button" onclick="faceAction({{ fc.id }}, 'mark-intentional')">Mark intentional</button>
+                {% elif fc.state == 'approved' and not fc.enabled %}
+                <button type="button" onclick="faceAction({{ fc.id }}, 'enable')">Enable</button>
+                {% endif %}
+              </div>
             </div>
             {% endfor %}
           </div>
