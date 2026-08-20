@@ -346,8 +346,8 @@ def _validate_face_correction_row(session, correction) -> None:
     if shot is None:
         raise ValidationError(f"face correction {correction.id} shot is missing")
 
-    # Keyframes must be finite, ordered, normalized inside [0,1], and within
-    # the shot's inclusive frame range.
+    # Keyframes must be finite, integer-framed, strictly positive in size,
+    # ordered, normalized inside [0,1], and within the shot's inclusive range.
     kfs = track.keyframes or []
     prev_frame: int | None = None
     for k in kfs:
@@ -356,6 +356,10 @@ def _validate_face_correction_row(session, correction) -> None:
         fi, nx, ny, nw, nh = k
         if not all(isinstance(v, (int, float)) and math.isfinite(float(v)) for v in (fi, nx, ny, nw, nh)):
             raise ValidationError(f"face correction {correction.id} has a non-finite keyframe")
+        if isinstance(fi, bool) or float(fi) != int(float(fi)):
+            raise ValidationError(f"face correction {correction.id} has a non-integer frame index")
+        if not (nw > 0 and nh > 0):
+            raise ValidationError(f"face correction {correction.id} has a non-positive keyframe width/height")
         if not (0.0 <= nx <= 1.0 and 0.0 <= ny <= 1.0 and nx + nw <= 1.0 + 1e-9 and ny + nh <= 1.0 + 1e-9):
             raise ValidationError(f"face correction {correction.id} has a keyframe outside normalized bounds")
         if prev_frame is not None and fi <= prev_frame:

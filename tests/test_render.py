@@ -73,8 +73,8 @@ def test_corrections_for_frame_empty():
     assert corrections_for_frame(0, []) == ()
 
 
-def test_render_aborts_on_invalid_enabled_face_correction(tmp_path):
-    from colorai.face_corrections import ValidationError
+def _enabled_face_correction_store(tmp_path, keyframes, *, state="approved", enabled=True):
+    """A store with one enabled face correction whose track uses ``keyframes``."""
     from colorai.project import FaceCorrection, FaceTrack, SkinMetric
     from colorai.skin_analysis import create_subject
 
@@ -102,25 +102,69 @@ def test_render_aborts_on_invalid_enabled_face_correction(tmp_path):
         track = FaceTrack(
             shot_id=shot.id, skin_metric_id=metric.id, subject_id=alice.id,
             source_width=64, source_height=64, analysis_scale=64,
-            keyframes=[[0, 0.25, 0.25, 0.5, 0.5], [9, 0.25, 0.25, 0.5, 0.5]],
+            keyframes=keyframes,
             sample_count=2, tracked_count=2, coverage=1.0, max_gap=0.0,
             skin_stability=0.01, median_bgr=[0.3, 0.3, 0.5], state="valid",
         )
         session.add(track)
         session.flush()
-        # Enabled but NOT approved -> must abort render before output.
         session.add(
             FaceCorrection(
                 shot_id=shot.id, subject_id=alice.id, skin_metric_id=metric.id,
                 face_track_id=track.id, kind="rgb_balance",
                 parameters={"gain": [1.0, 1.0, 1.0]},
                 reason="bad", classification="skin_mismatch",
-                state="suggested", enabled=True,
+                state=state, enabled=enabled,
             )
         )
         session.commit()
+    return store, asset
 
+
+def test_render_aborts_on_invalid_enabled_face_correction(tmp_path):
+    from colorai.face_corrections import ValidationError
+
+    store, asset = _enabled_face_correction_store(
+        tmp_path, [[0, 0.25, 0.25, 0.5, 0.5], [9, 0.25, 0.25, 0.5, 0.5]],
+        state="suggested",  # enabled but NOT approved -> abort before output
+    )
     out = tmp_path / "should_not_exist.mp4"
+    with pytest.raises(ValidationError):
+        render_master(store, asset.id, out)
+    assert not out.exists()
+
+
+def test_render_preflight_rejects_zero_width_keyframe(tmp_path):
+    from colorai.face_corrections import ValidationError
+
+    store, asset = _enabled_face_correction_store(
+        tmp_path, [[0, 0.25, 0.25, 0.0, 0.5], [9, 0.25, 0.25, 0.5, 0.5]],
+    )
+    out = tmp_path / "no_output.mp4"
+    with pytest.raises(ValidationError):
+        render_master(store, asset.id, out)
+    assert not out.exists()
+
+
+def test_render_preflight_rejects_negative_height_keyframe(tmp_path):
+    from colorai.face_corrections import ValidationError
+
+    store, asset = _enabled_face_correction_store(
+        tmp_path, [[0, 0.25, 0.25, 0.5, -0.1], [9, 0.25, 0.25, 0.5, 0.5]],
+    )
+    out = tmp_path / "no_output.mp4"
+    with pytest.raises(ValidationError):
+        render_master(store, asset.id, out)
+    assert not out.exists()
+
+
+def test_render_preflight_rejects_fractional_frame_index(tmp_path):
+    from colorai.face_corrections import ValidationError
+
+    store, asset = _enabled_face_correction_store(
+        tmp_path, [[0, 0.25, 0.25, 0.5, 0.5], [3.5, 0.25, 0.25, 0.5, 0.5]],
+    )
+    out = tmp_path / "no_output.mp4"
     with pytest.raises(ValidationError):
         render_master(store, asset.id, out)
     assert not out.exists()
