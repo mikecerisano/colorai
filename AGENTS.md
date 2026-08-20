@@ -59,6 +59,9 @@ src/colorai/
   organization.py    deterministic needs-organization suggestions
   planning.py        durable organization plan (draft/validate/approve/apply)
   face_corrections.py face-local tracked skin corrections + pure mask compositor
+  skin_appearance.py pure OKLab chroma math + bounded parameter validation
+  face_masks.py      reviewable temporal face-mask tracks (landmark/fallback)
+  skin_targets.py    skin references, targets, scope-safe candidate derivation
   face.py            YuNet detection + SFace identity + skin sampling
   nametag.py         lower-third OCR -> name suggestions (Tesseract CLI)
   skin.py            color-only skin heuristic (experiment)
@@ -95,6 +98,11 @@ docs/                architecture, status, audit, research notes
   the same transform to every frame; no per-frame generative grading.
 - **Measurements ≠ decisions.** A metric/statistical difference is data, not
   automatically an error. Preserve filmic intent.
+- **Skin targets are evidence, not identity truth.** A reference is labelled
+  accurate or creative; a mask contact sheet must be reviewed
+  (`approved_for_proposal`) before any skin target or `skin_appearance`
+  correction is drafted. MCP drafts/inspects/validates only — approving,
+  enabling, rejecting, and rendering stay human-only UI actions.
 
 ## How to add a pipeline stage
 

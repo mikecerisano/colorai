@@ -29,7 +29,13 @@ mcp = FastMCP(
         "refine grouping and corrections with clear reasoning in notes. "
         "Never modify source media; all edits go through these tools. "
         "Agents may draft and revise organization plans, but must NOT approve "
-        "or apply a plan — those are human-only decisions."
+        "or apply a plan — those are human-only decisions. "
+        "Before drafting a skin target or skin_appearance correction, inspect "
+        "source frames and get_face_mask_contact_sheet. Never claim a true "
+        "skin tone without an accurate human-designated reference. Treat a "
+        "creative reference as a softer look direction and leave uncertain "
+        "candidates ungraded. MCP may draft/inspect/validate skin targets but "
+        "must never approve, enable, reject, or render."
     ),
 )
 
@@ -1379,6 +1385,251 @@ def update_face_correction(
             reason=reason, confidence=confidence, classification=classification,
             gain=tuple(gain) if gain else None,
         ) or {"error": "not found or not suggested"}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Skin-appearance target tools (draft-only; approval/enable/render are human)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def skin_target_workspace(
+    project: str, asset_id: int, subject_id: int, group_id: int
+) -> dict:
+    """Read references, mask tracks, and targets for a subject×setup scope."""
+    from colorai.project.models import (
+        FaceMaskTrack,
+        SkinAppearanceReference,
+        SkinAppearanceTarget,
+    )
+
+    store = _open(project)
+    with store.session() as session:
+        references = [
+            {
+                "id": r.id, "subject_id": r.subject_id, "group_id": r.group_id,
+                "source_kind": r.source_kind, "role": r.role,
+                "source_path": r.source_path, "content_hash": r.content_hash,
+                "source_shot_id": r.source_shot_id, "frame_index": r.frame_index,
+                "crop_geometry": r.crop_geometry, "state": r.state,
+            }
+            for r in session.query(SkinAppearanceReference)
+            .filter_by(asset_id=asset_id, subject_id=subject_id, group_id=group_id)
+            .order_by(SkinAppearanceReference.id)
+            .all()
+        ]
+        targets = [
+            {
+                "id": t.id, "subject_id": t.subject_id, "group_id": t.group_id,
+                "reference_id": t.reference_id, "profile": t.profile,
+                "approved_preview_parameters": t.approved_preview_parameters,
+                "state": t.state, "rationale": t.rationale, "confidence": t.confidence,
+            }
+            for t in session.query(SkinAppearanceTarget)
+            .filter_by(subject_id=subject_id, group_id=group_id)
+            .order_by(SkinAppearanceTarget.id)
+            .all()
+        ]
+        masks = [
+            {
+                "id": m.id, "face_track_id": m.face_track_id, "shot_id": m.shot_id,
+                "backend": m.backend, "backend_version": m.backend_version,
+                "strategy": m.strategy, "coverage": m.coverage, "max_gap": m.max_gap,
+                "state": m.state, "review_state": m.review_state,
+                "review_reason": m.review_reason,
+            }
+            for m in session.query(FaceMaskTrack)
+            .filter_by(subject_id=subject_id)
+            .order_by(FaceMaskTrack.id)
+            .all()
+        ]
+        return {
+            "asset_id": asset_id,
+            "subject_id": subject_id,
+            "group_id": group_id,
+            "references": references,
+            "targets": targets,
+            "mask_tracks": masks,
+        }
+
+
+@mcp.tool()
+def request_skin_reference(
+    project: str, asset_id: int, subject_id: int, group_id: int, rationale: str
+) -> dict:
+    """Record an agent request for a better skin reference (reviewable note)."""
+    from colorai.skin_targets import request_skin_reference as _request
+
+    try:
+        note = _request(
+            _open(project), asset_id=asset_id, subject_id=subject_id,
+            group_id=group_id, rationale=rationale,
+        )
+        return {"note_id": note.id, "author": note.author, "text": note.text}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def create_skin_appearance_reference(
+    project: str,
+    subject_id: int,
+    group_id: int,
+    role: str,
+    source_shot_id: int | None = None,
+    frame_index: int | None = None,
+    external_path: str | None = None,
+    crop_geometry: dict | None = None,
+) -> dict:
+    """Create a provenance-backed skin reference (accurate or creative)."""
+    from pathlib import Path
+
+    from colorai.skin_targets import create_skin_reference as _create
+
+    try:
+        ref = _create(
+            _open(project),
+            subject_id=subject_id, group_id=group_id, role=role,
+            source_shot_id=source_shot_id, frame_index=frame_index,
+            external_path=Path(external_path) if external_path else None,
+            crop_geometry=crop_geometry,
+        )
+        return {"id": ref.id, "role": ref.role, "source_kind": ref.source_kind, "state": ref.state}
+    except (ValueError, OSError) as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def list_skin_appearance_references(project: str, asset_id: int) -> list[dict]:
+    from colorai.project.models import SkinAppearanceReference
+
+    with _open(project).session() as session:
+        return [
+            {
+                "id": r.id, "subject_id": r.subject_id, "group_id": r.group_id,
+                "source_kind": r.source_kind, "role": r.role,
+                "source_path": r.source_path, "content_hash": r.content_hash,
+                "source_shot_id": r.source_shot_id, "frame_index": r.frame_index,
+                "state": r.state,
+            }
+            for r in session.query(SkinAppearanceReference)
+            .filter_by(asset_id=asset_id)
+            .order_by(SkinAppearanceReference.id)
+            .all()
+        ]
+
+
+@mcp.tool()
+def build_face_mask_track(project: str, face_track_id: int, samples: int = 16) -> dict:
+    """Build a reviewable temporal face-mask track (does not approve a grade)."""
+    from colorai.face_masks import build_face_mask_track as _build
+    from colorai.face_masks import mediapipe_landmark_detector
+
+    try:
+        # Use the optional landmark backend when available; the builder keeps
+        # the labelled fallback when it is not.
+        detector = mediapipe_landmark_detector
+        mask = _build(_open(project), face_track_id, detector=detector, samples=samples)
+        return {
+            "id": mask.id,
+            "state": mask.state,
+            "backend": mask.backend,
+            "strategy": mask.strategy,
+            "coverage": mask.coverage,
+            "max_gap": mask.max_gap,
+            "review_state": mask.review_state,
+            "review_reason": mask.review_reason,
+        }
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def get_face_mask_contact_sheet(project: str, mask_track_id: int) -> Image:
+    """Return sampled source frames with the exact mask alpha overlaid."""
+    import io
+
+    from colorai.face_masks import make_face_mask_contact_sheet
+
+    sheet = make_face_mask_contact_sheet(_open(project), mask_track_id)
+    buf = io.BytesIO()
+    sheet.save(buf, format="PNG")
+    return Image(data=buf.getvalue(), format="png")
+
+
+@mcp.tool()
+def review_face_mask_evidence(
+    project: str, mask_track_id: int, review_state: str, reason: str
+) -> dict:
+    """Record an agent review state for mask evidence (never approves a target)."""
+    from colorai.skin_targets import review_face_mask as _review
+
+    try:
+        mask = _review(
+            _open(project), mask_track_id, review_state=review_state, reason=reason
+        )
+        return {"id": mask.id, "review_state": mask.review_state, "review_reason": mask.review_reason}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def suggest_skin_appearance_target(
+    project: str,
+    subject_id: int,
+    group_id: int,
+    reference_id: int | None,
+    face_track_id: int,
+    parameters: dict,
+    rationale: str,
+    confidence: float,
+) -> dict:
+    """Draft a *suggested* skin target (disabled; human must approve)."""
+    from colorai.skin_targets import suggest_skin_target as _suggest
+
+    try:
+        target = _suggest(
+            _open(project),
+            subject_id=subject_id, group_id=group_id, reference_id=reference_id,
+            face_track_id=face_track_id, parameters=parameters,
+            rationale=rationale, confidence=confidence,
+        )
+        return {"id": target.id, "state": target.state, "confidence": target.confidence}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def list_skin_appearance_targets(project: str, asset_id: int) -> list[dict]:
+    from colorai.project.models import Shot, ShotGroup, SkinAppearanceTarget
+
+    store = _open(project)
+    with store.session() as session:
+        group_ids = [g.id for g in session.query(ShotGroup).filter_by(asset_id=asset_id).all()]
+        return [
+            {
+                "id": t.id, "subject_id": t.subject_id, "group_id": t.group_id,
+                "reference_id": t.reference_id, "profile": t.profile,
+                "approved_preview_parameters": t.approved_preview_parameters,
+                "state": t.state, "rationale": t.rationale, "confidence": t.confidence,
+            }
+            for t in session.query(SkinAppearanceTarget)
+            .filter(SkinAppearanceTarget.group_id.in_(group_ids))
+            .order_by(SkinAppearanceTarget.id)
+            .all()
+        ]
+
+
+@mcp.tool()
+def match_skin_target_to_setup(
+    project: str, target_id: int, group_id: int
+) -> dict:
+    """Derive per-shot skin_appearance evidence (never persists a correction)."""
+    from colorai.skin_targets import match_skin_target_to_group as _match
+
+    try:
+        return _match(_open(project), target_id=target_id, group_id=group_id)
     except ValueError as exc:
         return {"error": str(exc)}
 
