@@ -213,3 +213,64 @@ def test_backfill_skin_metric_bboxes_mcp(tmp_path):
     assert out["scanned"] == 0
     assert out["backfilled"] == []
     assert out["unresolved"] == []
+
+
+def test_skin_first_selects_newest_valid_track_over_older_failed(tmp_path):
+    from colorai.project import Shot
+
+    db = tmp_path / "p.sqlite3"
+    store = ProjectStore.create(db)
+    project = store.create_project("skin")
+    asset = store.add_asset(
+        project.id, source_path="/media/m.mov", frame_rate=25.0, width=64, height=64
+    )
+    shots = make_shots(asset, [(0, 24), (25, 49)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        for s in shots:
+            session.refresh(s)
+    alice = create_subject(store, asset.id, "Alice")
+    group = create_group(store, asset.id, "interview", kind="setup")
+    for s in shots:
+        assign_shot_group(store, s.id, group.id)
+
+    with store.session() as session:
+        m0 = SkinMetric(shot_id=shots[0].id, face_index=0, mean_b=0.30, mean_g=0.30, mean_r=0.50,
+                        sample_pixels=10, subject_id=alice.id, bbox_x=16, bbox_y=16, bbox_w=32, bbox_h=32)
+        session.add(m0)
+        session.flush()
+        m1 = SkinMetric(shot_id=shots[1].id, face_index=0, mean_b=0.25, mean_g=0.30, mean_r=0.50,
+                        sample_pixels=10, subject_id=alice.id, bbox_x=16, bbox_y=16, bbox_w=32, bbox_h=32)
+        session.add(m1)
+        session.flush()
+        # Older FAILED track, then a newer VALID track for the same metric.
+        session.add(FaceTrack(
+            shot_id=shots[1].id, skin_metric_id=m1.id, subject_id=alice.id,
+            source_width=64, source_height=64, keyframes=[[0, 0.25, 0.25, 0.5, 0.5], [49, 0.25, 0.25, 0.5, 0.5]],
+            sample_count=2, tracked_count=2, coverage=1.0, max_gap=0.0,
+            skin_stability=0.01, median_bgr=[0.3, 0.3, 0.5], state="failed", failure_reason="old",
+        ))
+        session.flush()
+        valid = FaceTrack(
+            shot_id=shots[1].id, skin_metric_id=m1.id, subject_id=alice.id,
+            source_width=64, source_height=64, keyframes=[[0, 0.25, 0.25, 0.5, 0.5], [49, 0.25, 0.25, 0.5, 0.5]],
+            sample_count=2, tracked_count=2, coverage=1.0, max_gap=0.0,
+            skin_stability=0.01, median_bgr=[0.3, 0.3, 0.5], state="valid",
+        )
+        session.add(valid)
+        session.flush()
+        session.add(FaceTrack(
+            shot_id=shots[0].id, skin_metric_id=m0.id, subject_id=alice.id,
+            source_width=64, source_height=64, keyframes=[[0, 0.25, 0.25, 0.5, 0.5], [24, 0.25, 0.25, 0.5, 0.5]],
+            sample_count=2, tracked_count=2, coverage=1.0, max_gap=0.0,
+            skin_stability=0.01, median_bgr=[0.3, 0.3, 0.5], state="valid",
+        ))
+        session.commit()
+        valid_id = valid.id
+
+    _approved_reference(db, asset, alice, group, shots[0])
+
+    result = mcp_server.skin_first_match_subject_setup(db, asset.id, alice.id, group.id)
+    cand = next(c for c in result["candidates"] if c["shot_id"] == shots[1].id)
+    assert cand["face_track_id"] == valid_id

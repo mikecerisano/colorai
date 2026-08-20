@@ -200,6 +200,9 @@ def build_face_track(
     only when coverage >= 75%, the largest gap <= 20% of the shot duration,
     and temporal skin stability is below the threshold; otherwise persists a
     ``failed`` track (QC evidence only).
+
+    ``median_bgr`` and ``skin_stability`` are stored in **normalized** BGR
+    (``[0, 1]``), matching ``SkinMetric.mean_b/g/r`` — not raw code values.
     """
     with store.session() as session:
         metric = session.get(SkinMetric, skin_metric_id)
@@ -248,7 +251,10 @@ def build_face_track(
             keyframes.append((fi, nx, ny, nw, nh))
             skin = skin_metrics_in_region(image, box)
             if skin is not None:
-                signatures.append(tuple(skin["mean_bgr"]))
+                # skin_metrics_in_region returns raw 0..255 code values; store
+                # normalized [0,1] so stability uses the same domain as
+                # SkinMetric.mean_b/g/r and SKIN_STABILITY_THRESHOLD.
+                signatures.append(tuple(v / 255.0 for v in skin["mean_bgr"]))
     finally:
         shutil.rmtree(probe_dir, ignore_errors=True)
 

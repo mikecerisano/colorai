@@ -279,6 +279,51 @@ def test_build_face_track_fails_on_excessive_gap():
     assert "gap" in track.failure_reason
 
 
+def _varying_extract(blue_fn):
+    def extract(video_path, frame_index, out_path, fps=None, scale=None):
+        cv2.imwrite(
+            str(out_path),
+            np.full((270, 480, 3), (blue_fn(frame_index), 97, 148), dtype=np.uint8),
+        )
+        return out_path
+
+    return extract
+
+
+def _patch_skin_metrics(monkeypatch):
+    def fake_skin(image, bbox):
+        return {
+            "mean_bgr": [int(image[0, 0, 0]), int(image[0, 0, 1]), int(image[0, 0, 2])],
+            "sample_pixels": 100,
+        }
+
+    monkeypatch.setattr("colorai.face_corrections.skin_metrics_in_region", fake_skin)
+
+
+def test_build_face_track_normalizes_small_raw_variation(tmp_path, monkeypatch):
+    store, asset, shot, alice, metric = _fixture()
+    _patch_skin_metrics(monkeypatch)
+    track = build_face_track(
+        store, metric.id, samples=16, scale=480,
+        extract=_varying_extract(lambda fi: 89 + (fi % 4)),
+        detect=lambda img: [(25, 30, 50, 60)],
+    )
+    assert track.state == "valid"
+    assert all(0.0 <= v <= 1.0 for v in track.median_bgr)
+
+
+def test_build_face_track_fails_large_raw_variation(tmp_path, monkeypatch):
+    store, asset, shot, alice, metric = _fixture()
+    _patch_skin_metrics(monkeypatch)
+    track = build_face_track(
+        store, metric.id, samples=16, scale=480,
+        extract=_varying_extract(lambda fi: 89 + fi * 5),
+        detect=lambda img: [(25, 30, 50, 60)],
+    )
+    assert track.state == "failed"
+    assert "stability" in track.failure_reason
+
+
 def test_preview_applies_face_correction_via_shared_compositor(tmp_path):
     from colorai.correction import load_corrected_still
     from colorai.editorial import assign_shot_group, create_group
