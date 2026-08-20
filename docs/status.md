@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 425 tests passing.
+Current progress. 429 tests passing.
 
 ## Done
 
@@ -173,12 +173,16 @@ Current progress. 425 tests passing.
   plan as one transaction — invalid accepted decisions apply nothing.
   `broll` is now an explicit `ShotGroup.kind`; matching rejects it. Exposed
   via MCP (`organization_workspace`, `get_shot_contact_sheet`,
-  `create/get/list/update/validate/approve/apply_organization_plan`) and a
-  review-UI Organization-draft view (proposed families / B-roll / needs a
-  decision / validation & apply). Agents may draft/revise; approve and apply
-  are human-only. Group-scoped reference proposals now require an exact
-  participant and a shot inside that setup/variant with the participant's
-  face (invalid proposals fail at proposal time).
+  `create/get/list/update/validate_organization_plan`) and a review-UI
+  Organization-draft view (proposed families / B-roll / needs a decision /
+  validation & apply). Agents may draft/revise/inspect/validate; approve and
+  apply are human-only (excluded from MCP). Applying a plan creates a B-roll
+  group lazily (only when an accepted item targets B-roll), a variant's
+  resolved parent must be a setup (never another variant, including a linked
+  existing variant), and a plan group linked to an existing group applies its
+  accepted name/camera atomically. Group-scoped reference proposals now
+  require an exact participant and a shot inside that setup/variant with the
+  participant's face (invalid proposals fail at proposal time).
 - **Setup-first review refinement** — setup cards report their total member
   shots (including variants), and a shared multi-person setup exposes its
   participants separately. A human can choose and approve a reference for
@@ -226,7 +230,7 @@ Current progress. 425 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 425 tests across timecode, project model, migrations (incl. legacy
+- 429 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
   auto-assignment), correction, LUT/curve, render, resumability, editorial,
   references, matching (incl. variants), analysis, face (incl. bbox), skin,

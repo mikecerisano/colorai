@@ -166,11 +166,26 @@ def structural_errors(
             if pid not in subject_ids:
                 errors.append(f"planned group {key!r} references unknown subject {pid}")
 
-    # A variant's parent must resolve to a planned or existing *setup* key.
+    # A variant's parent must resolve to a *setup* — never another variant —
+    # whether that parent is a planned group or its linked existing group.
     for key, g in by_key.items():
         parent_key = g.get("parent_draft_key")
-        if parent_key and parent_key not in by_key:
+        if not parent_key:
+            continue
+        parent = by_key.get(parent_key)
+        if parent is None:
             errors.append(f"variant {key!r} parent {parent_key!r} is not a planned group")
+            continue
+        if parent.get("kind", GROUP_KIND_SETUP) != GROUP_KIND_SETUP:
+            errors.append(
+                f"variant {key!r} parent {parent_key!r} must be a setup, not a variant"
+            )
+        elif parent.get("existing_group_id") is not None:
+            linked = group_rows.get(parent["existing_group_id"])
+            if linked is not None and linked.kind != GROUP_KIND_SETUP:
+                errors.append(
+                    f"variant {key!r} parent's linked group {linked.id} must be a setup"
+                )
 
     seen_shots: set[int] = set()
     for i, item in enumerate(items):
@@ -294,6 +309,18 @@ def validate_plan(session, plan: OrganizationPlan) -> tuple[list[str], list[str]
             errors.append(f"setup {g.draft_key!r} must not have a parent")
         if g.parent_draft_key and g.parent_draft_key not in group_by_key:
             errors.append(f"variant {g.draft_key!r} parent {g.parent_draft_key!r} is missing")
+        if g.kind == GROUP_KIND_VARIANT and g.parent_draft_key:
+            parent = group_by_key.get(g.parent_draft_key)
+            if parent is not None and parent.kind != GROUP_KIND_SETUP:
+                errors.append(
+                    f"variant {g.draft_key!r} parent {g.parent_draft_key!r} must be a setup"
+                )
+            if parent is not None and parent.existing_group_id is not None:
+                linked = session.get(ShotGroup, parent.existing_group_id)
+                if linked is not None and linked.kind != GROUP_KIND_SETUP:
+                    errors.append(
+                        f"variant {g.draft_key!r} parent's linked group {linked.id} must be a setup"
+                    )
 
     for item in items:
         if item.shot_id not in shot_by_id:
@@ -660,7 +687,7 @@ def apply_organization_plan(store: ProjectStore, plan_id: int) -> dict:
             s.id: s for s in session.query(Shot).filter_by(asset_id=plan.asset_id).all()
         }
 
-        broll_id = _broll_group_id(session, plan.asset_id)
+        broll_id: int | None = None
         created_by_key: dict[str, int] = {}
         created_groups: list[dict] = []
         reused_groups: list[dict] = []
@@ -673,8 +700,18 @@ def apply_organization_plan(store: ProjectStore, plan_id: int) -> dict:
             if pg is None:
                 raise ValueError(f"unknown planned group {key!r}")
             if pg.existing_group_id is not None:
+                existing = session.get(ShotGroup, pg.existing_group_id)
+                if existing is None:
+                    raise ValueError(f"linked group {pg.existing_group_id} not found")
+                # A linked existing group takes the plan's accepted name/camera
+                # verbatim (its kind and parent stay authoritative).
+                existing.name = pg.name
+                existing.camera = pg.camera
+                session.flush()
                 created_by_key[key] = pg.existing_group_id
-                reused_groups.append({"draft_key": key, "group_id": pg.existing_group_id})
+                reused_groups.append(
+                    {"draft_key": key, "group_id": pg.existing_group_id, "name": existing.name, "camera": existing.camera}
+                )
                 return pg.existing_group_id
             parent_id = ensure_group(pg.parent_draft_key) if pg.parent_draft_key else None
             g = ShotGroup(
@@ -706,6 +743,8 @@ def apply_organization_plan(store: ProjectStore, plan_id: int) -> dict:
                 shot.group_id = ensure_group(item.target_draft_key) if item.target_draft_key else None
                 shot.excused = False
             elif dst == DEST_BROLL:
+                if broll_id is None:
+                    broll_id = _broll_group_id(session, plan.asset_id)
                 shot.group_id = broll_id
                 shot.excused = False
             elif dst == DEST_INTENTIONAL_EXCEPTION:

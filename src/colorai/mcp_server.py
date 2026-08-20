@@ -1107,22 +1107,6 @@ def validate_organization_plan(project: str, plan_id: int) -> dict:
 
 
 @mcp.tool()
-def approve_organization_plan(project: str, plan_id: int, approved_by: str = "human") -> dict:
-    """Human-only: approve a draft (does not apply it)."""
-    from colorai.planning import approve_organization_plan as _approve
-
-    return _approve(_open(project), plan_id, approved_by=approved_by)
-
-
-@mcp.tool()
-def apply_organization_plan(project: str, plan_id: int) -> dict:
-    """Human-only: atomically apply an approved plan (re-validates in the transaction)."""
-    from colorai.planning import apply_organization_plan as _apply
-
-    return _apply(_open(project), plan_id)
-
-
-@mcp.tool()
 def add_correction(project: str, shot_id: int, kind: str, parameters: dict) -> dict:
     """Add a deterministic correction to a shot.
 

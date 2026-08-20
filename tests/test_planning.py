@@ -256,3 +256,81 @@ def test_list_plans_and_update_item(tmp_path):
     assert updated["decision"] == "accepted"
     assert updated["destination_type"] == DEST_INTENTIONAL_EXCEPTION
     assert updated["human_override_reason"] == "not part of the interview"
+
+
+def test_setup_only_plan_creates_no_broll_group(tmp_path):
+    store, asset, shots, alice, bob = _store_with_asset(tmp_path)
+    groups = [
+        {"draft_key": "s1", "name": "interview", "kind": "setup", "participant_ids": [alice.id]}
+    ]
+    items = [
+        _setup_item(shots[0].id, draft_key="s1"),
+        _setup_item(shots[1].id, draft_key="s1"),
+        {"shot_id": shots[2].id, "destination_type": DEST_UNRESOLVED, "decision": "rejected"},
+        {"shot_id": shots[3].id, "destination_type": DEST_INTENTIONAL_EXCEPTION, "decision": "accepted"},
+    ]
+    plan = create_organization_plan(store, asset.id, groups, items)
+    approve_organization_plan(store, plan.id)
+    result = apply_organization_plan(store, plan.id)
+    assert result["state"] == STATE_APPLIED
+
+    with store.session() as session:
+        broll = session.query(ShotGroup).filter_by(asset_id=asset.id, kind="broll").all()
+        assert broll == []
+
+
+def test_variant_under_variant_rejected(tmp_path):
+    store, asset, shots, alice, bob = _store_with_asset(tmp_path)
+    groups = [
+        {"draft_key": "s1", "name": "setup", "kind": "setup"},
+        {"draft_key": "v2", "name": "outer variant", "kind": "variant", "parent_draft_key": "s1"},
+        {"draft_key": "v1", "name": "inner variant", "kind": "variant", "parent_draft_key": "v2"},
+    ]
+    with pytest.raises(ValueError, match="must be a setup"):
+        create_organization_plan(store, asset.id, groups, [])
+
+
+def test_variant_parent_linked_to_variant_rejected(tmp_path):
+    store, asset, shots, alice, bob = _store_with_asset(tmp_path)
+    setup = create_group(store, asset.id, "existing setup", kind="setup")
+    variant = create_group(
+        store, asset.id, "existing variant", kind="variant", parent_id=setup.id
+    )
+    groups = [
+        {"draft_key": "p1", "name": "parent", "kind": "setup", "existing_group_id": variant.id},
+        {"draft_key": "v1", "name": "child", "kind": "variant", "parent_draft_key": "p1"},
+    ]
+    with pytest.raises(ValueError, match="must be a setup"):
+        create_organization_plan(store, asset.id, groups, [])
+
+
+def test_reused_group_applies_name_and_camera(tmp_path):
+    store, asset, shots, alice, bob = _store_with_asset(tmp_path)
+    existing = create_group(store, asset.id, "old name", kind="setup", camera="A")
+    groups = [
+        {
+            "draft_key": "s1",
+            "name": "renamed interview",
+            "kind": "setup",
+            "camera": "B",
+            "existing_group_id": existing.id,
+            "participant_ids": [alice.id],
+        }
+    ]
+    items = [
+        _setup_item(shots[0].id, draft_key="s1"),
+        {"shot_id": shots[1].id, "destination_type": DEST_UNRESOLVED, "decision": "rejected"},
+        {"shot_id": shots[2].id, "destination_type": DEST_UNRESOLVED, "decision": "rejected"},
+        {"shot_id": shots[3].id, "destination_type": DEST_UNRESOLVED, "decision": "rejected"},
+    ]
+    plan = create_organization_plan(store, asset.id, groups, items)
+    approve_organization_plan(store, plan.id)
+    result = apply_organization_plan(store, plan.id)
+    assert result["state"] == STATE_APPLIED
+
+    with store.session() as session:
+        g = session.get(ShotGroup, existing.id)
+        assert g.name == "renamed interview"
+        assert g.camera == "B"
+        s0 = session.get(Shot, shots[0].id)
+        assert s0.group_id == existing.id

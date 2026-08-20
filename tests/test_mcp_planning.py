@@ -139,23 +139,21 @@ def test_update_item_and_group(tmp_path):
     assert renamed["name"] == "renamed"
 
 
-def test_approve_and_apply_via_mcp(tmp_path):
-    db, asset, shots, alice, bob = _planning_store(tmp_path)
-    groups, items = _complete_plan(shots, alice)
-    plan = mcp_server.create_organization_plan(db, asset.id, groups, items)
+def test_mcp_surface_excludes_human_approve_and_apply(tmp_path):
+    import asyncio
 
-    assert mcp_server.approve_organization_plan(db, plan["id"])["state"] == "approved"
-    result = mcp_server.apply_organization_plan(db, plan["id"])
-    assert result["state"] == "applied"
-
-    shot_list = {s["id"]: s for s in mcp_server.list_shots(db, asset.id)}
-    assert shot_list[shots[0].id]["group_id"] is not None
-    assert shot_list[shots[1].id]["group_id"] is not None
-    assert shot_list[shots[3].id]["group_id"] is not None  # b-roll group
-
-    groups_now = mcp_server.list_shot_groups(db, asset.id)
-    kinds = {g["kind"] for g in groups_now}
-    assert "setup" in kinds and "broll" in kinds
+    names = {t.name for t in asyncio.run(mcp_server.mcp.list_tools())}
+    assert "create_organization_plan" in names
+    assert "get_organization_plan" in names
+    assert "list_organization_plans" in names
+    assert "update_organization_plan_item" in names
+    assert "update_organization_plan_group" in names
+    assert "validate_organization_plan" in names
+    assert "organization_workspace" in names
+    assert "get_shot_contact_sheet" in names
+    # Human-only decisions are not part of the agent-facing MCP surface.
+    assert "approve_organization_plan" not in names
+    assert "apply_organization_plan" not in names
 
 
 def test_get_shot_contact_sheet(tmp_path):
