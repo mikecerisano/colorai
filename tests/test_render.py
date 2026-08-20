@@ -220,6 +220,7 @@ def _enabled_skin_appearance_store(tmp_path, *, mask_review_state):
         session.flush()
         target = SkinAppearanceTarget(
             subject_id=alice.id, group_id=group.id, reference_id=None,
+            mask_track_id=mask.id,
             profile={"mean_ab": [0.0, 0.0], "spread_ab": [0.01, 0.01]},
             canonical_profile={"mean_ab": [0.0, 0.0], "spread_ab": [0.01, 0.01]},
             approved_preview_parameters={}, state="approved",
@@ -229,7 +230,7 @@ def _enabled_skin_appearance_store(tmp_path, *, mask_review_state):
         session.add(
             FaceCorrection(
                 shot_id=shot.id, subject_id=alice.id, skin_metric_id=metric.id,
-                face_track_id=track.id, skin_target_id=target.id,
+                face_track_id=track.id, mask_track_id=mask.id, skin_target_id=target.id,
                 reference_group_id=group.id,
                 kind="skin_appearance",
                 parameters={
@@ -308,6 +309,91 @@ def test_render_aborts_for_malformed_canonical_profile(tmp_path):
 
     out = tmp_path / "no_output.mp4"
     with pytest.raises(ValidationError, match="non-finite"):
+        render_master(store, asset.id, out)
+    assert not out.exists()
+
+
+def test_render_uses_exact_persisted_mask_not_latest(tmp_path):
+    """A correction renders from its exact persisted mask row. Replacing that
+    row (a later mask rebuild) must abort, never silently use the new mask."""
+    from colorai.face_corrections import ValidationError, load_face_correction_specs
+    from colorai.project import FaceMaskTrack, FaceTrack
+
+    store, asset = _enabled_skin_appearance_store(
+        tmp_path, mask_review_state="approved_for_proposal"
+    )
+    with store.session() as session:
+        track = session.query(FaceTrack).one()
+        mask_a = session.query(FaceMaskTrack).one()
+        mask_a_id = mask_a.id
+        shot_id = track.shot_id
+        subject_id = track.subject_id
+        session.commit()
+
+    specs = load_face_correction_specs(store, shot_id)
+    assert specs[0].mask_geometry_keyframes[0][1]["oval"][0] == pytest.approx([0.25, 0.25])
+
+    # Replace the exact mask with a NEW mask (new id) for the same face track.
+    with store.session() as session:
+        session.delete(session.get(FaceMaskTrack, mask_a_id))
+        session.flush()
+        session.add(FaceMaskTrack(
+            face_track_id=track.id, shot_id=shot_id, subject_id=subject_id,
+            backend="landmark", backend_version="2", strategy="landmark_skin",
+            landmark_keyframes=[[0, {"oval": [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]], "eyes": [], "brows": [], "lips": [], "hairline": []}]],
+            coverage=1.0, max_gap=0.0, review_state="approved_for_proposal",
+        ))
+        session.commit()
+
+    with pytest.raises(ValidationError, match="persisted mask"):
+        load_face_correction_specs(store, shot_id)
+
+
+def test_preflight_validates_target_source_evidence_mask(tmp_path):
+    from colorai.face_corrections import ValidationError
+    from colorai.project import (
+        FaceMaskTrack,
+        FaceTrack,
+        Shot,
+        SkinAppearanceTarget,
+        SkinMetric,
+        Subject,
+    )
+
+    store, asset = _enabled_skin_appearance_store(
+        tmp_path, mask_review_state="approved_for_proposal"
+    )
+    with store.session() as session:
+        shot = session.query(Shot).one()
+        subject = session.query(Subject).one()
+        metric2 = SkinMetric(
+            shot_id=shot.id, face_index=1, mean_b=0.3, mean_g=0.3, mean_r=0.5,
+            sample_pixels=10, subject_id=subject.id, bbox_x=8, bbox_y=8, bbox_w=8, bbox_h=8,
+        )
+        session.add(metric2)
+        session.flush()
+        track2 = FaceTrack(
+            shot_id=shot.id, skin_metric_id=metric2.id, subject_id=subject.id,
+            source_width=64, source_height=64, keyframes=[[0, 0.25, 0.25, 0.5, 0.5]],
+            sample_count=1, tracked_count=1, coverage=1.0, max_gap=0.0,
+            skin_stability=0.01, median_bgr=[0.3, 0.3, 0.5], state="valid",
+        )
+        session.add(track2)
+        session.flush()
+        mask2 = FaceMaskTrack(
+            face_track_id=track2.id, shot_id=shot.id, subject_id=subject.id,
+            backend="fallback", backend_version="0", strategy="face_oval_skin",
+            landmark_keyframes=[], coverage=1.0, max_gap=0.0,
+            review_state="unreviewed", human_approved=True,
+        )
+        session.add(mask2)
+        session.flush()
+        target = session.query(SkinAppearanceTarget).one()
+        target.mask_track_id = mask2.id
+        session.commit()
+
+    out = tmp_path / "no_output.mp4"
+    with pytest.raises(ValidationError, match="target mask"):
         render_master(store, asset.id, out)
     assert not out.exists()
 

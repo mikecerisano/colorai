@@ -91,6 +91,7 @@ def _legacy_chain(inspector) -> list[tuple[str, bool]]:
             and "human_approved" in columns("face_mask_tracks")
             and "profile" in columns("skin_appearance_references"),
         ),
+        ("c9d8e7f6a5b4", "mask_track_id" in columns("face_corrections")),
     ]
 
 

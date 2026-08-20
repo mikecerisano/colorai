@@ -354,38 +354,24 @@ class ValidationError(ValueError):
 
 
 def _validate_skin_appearance_scope(session, correction, shot) -> None:
-    """Validate the reviewed mask track and approved target for a skin_appearance."""
+    """Validate the exact reviewed masks and approved target for a skin_appearance.
+
+    Both the candidate's persisted mask (``correction.mask_track_id``) and the
+    target's source-evidence mask (``target.mask_track_id``) are revalidated so
+    a later mask rebuild cannot silently change what renders.
+    """
     from colorai.project.models import FaceMaskTrack, SkinAppearanceTarget
 
-    if correction.face_track_id is None:
-        raise ValidationError(f"face correction {correction.id} has no face track")
-    mask = (
-        session.query(FaceMaskTrack)
-        .filter_by(face_track_id=correction.face_track_id)
-        .order_by(FaceMaskTrack.id.desc())
-        .first()
-    )
-    if mask is None:
-        raise ValidationError(f"face correction {correction.id} has no face mask track")
-    if mask.state != "valid":
-        raise ValidationError(f"face correction {correction.id} mask track is not valid")
-    if mask.review_state != "approved_for_proposal":
-        raise ValidationError(
-            f"face correction {correction.id} mask track must be reviewed "
-            f"'approved_for_proposal' (currently {mask.review_state!r})"
-        )
-    if mask.backend == "fallback" and not mask.human_approved:
-        raise ValidationError(
-            f"face correction {correction.id} uses a fallback mask without explicit human approval"
-        )
-    if mask.subject_id != correction.subject_id:
-        raise ValidationError(f"face correction {correction.id} mask subject mismatch")
-    if mask.shot_id != correction.shot_id:
-        raise ValidationError(f"face correction {correction.id} mask shot mismatch")
-    if mask.coverage < MIN_COVERAGE:
-        raise ValidationError(f"face correction {correction.id} mask coverage below threshold")
-    if mask.max_gap > MAX_GAP_RATIO:
-        raise ValidationError(f"face correction {correction.id} mask gap exceeds threshold")
+    if correction.mask_track_id is None:
+        raise ValidationError(f"face correction {correction.id} has no persisted mask track")
+    candidate_mask = session.get(FaceMaskTrack, correction.mask_track_id)
+    _require_usable_mask(session, correction, candidate_mask, label="candidate")
+    if candidate_mask.face_track_id != correction.face_track_id:
+        raise ValidationError(f"face correction {correction.id} candidate mask/face-track linkage mismatch")
+    if candidate_mask.subject_id != correction.subject_id:
+        raise ValidationError(f"face correction {correction.id} candidate mask subject mismatch")
+    if candidate_mask.shot_id != correction.shot_id:
+        raise ValidationError(f"face correction {correction.id} candidate mask shot mismatch")
 
     if correction.skin_target_id is None:
         raise ValidationError(f"face correction {correction.id} has no skin target")
@@ -400,6 +386,14 @@ def _validate_skin_appearance_scope(session, correction, shot) -> None:
         raise ValidationError(f"face correction {correction.id} skin target subject mismatch")
     if correction.reference_group_id is not None and target.group_id != correction.reference_group_id:
         raise ValidationError(f"face correction {correction.id} skin target group scope mismatch")
+
+    if target.mask_track_id is None:
+        raise ValidationError(f"face correction {correction.id} target has no source-evidence mask")
+    target_mask = session.get(FaceMaskTrack, target.mask_track_id)
+    _require_usable_mask(session, correction, target_mask, label="target")
+    if target_mask.subject_id != target.subject_id:
+        raise ValidationError(f"face correction {correction.id} target mask subject mismatch")
+
     _validate_canonical_profile(correction, target)
     if target.subject_id is not None:
         from colorai.project.models import Subject
@@ -407,6 +401,28 @@ def _validate_skin_appearance_scope(session, correction, shot) -> None:
         subject = session.get(Subject, target.subject_id)
         if subject is None or subject.asset_id != shot.asset_id:
             raise ValidationError(f"face correction {correction.id} skin target subject/asset mismatch")
+
+
+def _require_usable_mask(session, correction, mask, *, label: str) -> None:
+    """Raise ``ValidationError`` unless ``mask`` is proposal-ready evidence."""
+    if mask is None:
+        raise ValidationError(f"face correction {correction.id} {label} mask is missing")
+    if mask.state != "valid":
+        raise ValidationError(f"face correction {correction.id} {label} mask is not valid")
+    if mask.review_state != "approved_for_proposal":
+        raise ValidationError(
+            f"face correction {correction.id} {label} mask must be reviewed "
+            f"'approved_for_proposal' (currently {mask.review_state!r})"
+        )
+    if mask.backend == "fallback" and not mask.human_approved:
+        raise ValidationError(
+            f"face correction {correction.id} {label} mask is a fallback mask "
+            "without explicit human approval"
+        )
+    if mask.coverage < MIN_COVERAGE:
+        raise ValidationError(f"face correction {correction.id} {label} mask coverage below threshold")
+    if mask.max_gap > MAX_GAP_RATIO:
+        raise ValidationError(f"face correction {correction.id} {label} mask gap exceeds threshold")
 
 
 def _validate_canonical_profile(correction, target) -> None:
@@ -739,12 +755,9 @@ def load_face_correction_specs(
             track = session.get(FaceTrack, c.face_track_id)
             keyframes = tuple(tuple(k) for k in (track.keyframes or []))
             if c.kind == "skin_appearance":
-                mask = (
-                    session.query(FaceMaskTrack)
-                    .filter_by(face_track_id=c.face_track_id)
-                    .order_by(FaceMaskTrack.id.desc())
-                    .first()
-                )
+                # Render from the *exact* reviewed mask persisted on the row,
+                # never the latest mask for the face track.
+                mask = session.get(FaceMaskTrack, c.mask_track_id)
                 parameters = dict(c.parameters or {})
                 parameters["mask_strategy"] = mask.strategy
                 specs.append(

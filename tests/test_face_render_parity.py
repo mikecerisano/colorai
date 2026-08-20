@@ -220,6 +220,7 @@ def _skin_appearance_fixture(tmp_path):
         session.flush()
         target = SkinAppearanceTarget(
             subject_id=alice.id, group_id=group.id, reference_id=None,
+            mask_track_id=mask.id,
             profile={"mean_ab": [0.0, 0.0], "spread_ab": [0.01, 0.01]},
             canonical_profile={"mean_ab": [0.0, 0.0], "spread_ab": [0.01, 0.01]},
             approved_preview_parameters={}, state="approved",
@@ -229,7 +230,7 @@ def _skin_appearance_fixture(tmp_path):
         session.add(
             FaceCorrection(
                 shot_id=shot.id, subject_id=alice.id, skin_metric_id=metric.id,
-                face_track_id=track.id, skin_target_id=target.id,
+                face_track_id=track.id, mask_track_id=mask.id, skin_target_id=target.id,
                 reference_group_id=group.id, kind="skin_appearance",
                 parameters={"version": 1, "space": "oklab", "luma_mode": "preserve",
                             "ab_offset": [-0.03, 0.0], "ab_scale": [1.0, 1.0], "strength": 1.0},

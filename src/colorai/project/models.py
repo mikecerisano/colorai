@@ -602,6 +602,9 @@ class FaceCorrection(Base):
     skin_target_id: Mapped[int | None] = mapped_column(
         ForeignKey("skin_appearance_targets.id", ondelete="SET NULL"), nullable=True
     )
+    mask_track_id: Mapped[int | None] = mapped_column(
+        ForeignKey("face_mask_tracks.id", ondelete="SET NULL"), nullable=True
+    )
     kind: Mapped[str] = mapped_column(String(64), nullable=False, default="rgb_balance")
     parameters: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     evidence: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

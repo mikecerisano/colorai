@@ -413,6 +413,7 @@ def test_propose_skin_appearance_correction_is_suggested_and_disabled(tmp_path):
     assert correction.enabled is False
     assert correction.kind == "skin_appearance"
     assert correction.skin_target_id == target.id
+    assert correction.mask_track_id == mask_ids[1]
 
 
 def test_propose_skin_appearance_rejects_cross_group_candidate(tmp_path):

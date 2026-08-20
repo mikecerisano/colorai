@@ -589,6 +589,7 @@ def propose_skin_appearance_correction(
             subject_id=subject_id,
             skin_metric_id=skin_metric_id,
             face_track_id=face_track_id,
+            mask_track_id=mask.id,
             skin_target_id=skin_target_id,
             reference_group_id=target.group_id,
             reference_shot_id=None,
