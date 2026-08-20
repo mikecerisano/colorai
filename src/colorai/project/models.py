@@ -598,6 +598,9 @@ class FaceCorrection(Base):
     reference_group_id: Mapped[int | None] = mapped_column(
         ForeignKey("shot_groups.id", ondelete="SET NULL"), nullable=True
     )
+    skin_target_id: Mapped[int | None] = mapped_column(
+        ForeignKey("skin_appearance_targets.id", ondelete="SET NULL"), nullable=True
+    )
     kind: Mapped[str] = mapped_column(String(64), nullable=False, default="rgb_balance")
     parameters: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     evidence: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
@@ -609,6 +612,118 @@ class FaceCorrection(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     shot: Mapped[Shot] = relationship(foreign_keys=[shot_id])
+
+
+class SkinAppearanceReference(Base):
+    """A human-labelled skin-appearance reference for one subject/scope.
+
+    ``role`` is either ``accurate_skin_reference`` (masked face chroma may be
+    used as target evidence) or ``creative_look_direction`` (a soft aesthetic
+    preference, never an accuracy claim). External images are copied into
+    project-managed storage by content hash; the original path and hash are
+    kept for provenance. A project-frame reference is stored as provenance too
+    and must contain the target subject's face within the exact group scope.
+    """
+
+    __tablename__ = "skin_appearance_references"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    subject_id: Mapped[int] = mapped_column(
+        ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    asset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("media_assets.id", ondelete="CASCADE"), nullable=True
+    )
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shot_groups.id", ondelete="SET NULL"), nullable=True
+    )
+    source_kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_path: Mapped[str | None] = mapped_column(Text)
+    managed_path: Mapped[str | None] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_shot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shots.id", ondelete="SET NULL"), nullable=True
+    )
+    frame_index: Mapped[int | None] = mapped_column(Integer)
+    crop_geometry: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    subject: Mapped[Subject] = relationship()
+    asset: Mapped["MediaAsset | None"] = relationship()
+    group: Mapped["ShotGroup | None"] = relationship()
+    source_shot: Mapped["Shot | None"] = relationship(foreign_keys=[source_shot_id])
+
+
+class FaceMaskTrack(Base):
+    """A reviewable temporal face-mask track for one ``FaceTrack``.
+
+    Stores normalized landmark keyframes (face oval, eyes, brows, lips,
+    hairline), backend provenance, quality metrics, and a review state.
+    ``review_state == "approved_for_proposal"`` is the sole gate for drafting a
+    skin target or correction; ``needs_rebuild`` and ``unsafe`` are agent/human
+    outcomes that block proposals.
+    """
+
+    __tablename__ = "face_mask_tracks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    face_track_id: Mapped[int] = mapped_column(
+        ForeignKey("face_tracks.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    shot_id: Mapped[int] = mapped_column(
+        ForeignKey("shots.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    subject_id: Mapped[int] = mapped_column(
+        ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    backend: Mapped[str] = mapped_column(String(32), nullable=False)
+    backend_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    strategy: Mapped[str] = mapped_column(String(32), nullable=False)
+    landmark_keyframes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    coverage: Mapped[float] = mapped_column(Float, nullable=False)
+    max_gap: Mapped[float] = mapped_column(Float, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="valid")
+    review_state: Mapped[str] = mapped_column(String(32), nullable=False, default="unreviewed")
+    review_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    shot: Mapped[Shot] = relationship()
+    subject: Mapped[Subject] = relationship()
+
+
+class SkinAppearanceTarget(Base):
+    """A human-reviewable skin-appearance target for a subject×group scope.
+
+    ``profile`` is the masked face profile (robust centre/spread in OKLab
+    opponent chroma); ``approved_preview_parameters`` are the bounded,
+    versioned ``skin_appearance`` parameters. State machine: ``suggested`` ->
+    ``approved`` | ``rejected`` (no automatic transitions).
+    """
+
+    __tablename__ = "skin_appearance_targets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    subject_id: Mapped[int] = mapped_column(
+        ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("shot_groups.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    reference_id: Mapped[int | None] = mapped_column(
+        ForeignKey("skin_appearance_references.id", ondelete="SET NULL"), nullable=True
+    )
+    profile: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    approved_preview_parameters: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="suggested")
+    rationale: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    subject: Mapped[Subject] = relationship()
+    group: Mapped[ShotGroup] = relationship()
+    reference: Mapped["SkinAppearanceReference | None"] = relationship()
 
 
 # Silence unused-import lint for re-exported names.
@@ -631,5 +746,8 @@ __all__ = [
     "OrganizationPlanItem",
     "FaceTrack",
     "FaceCorrection",
+    "FaceMaskTrack",
+    "SkinAppearanceReference",
+    "SkinAppearanceTarget",
     "utcnow",
 ]

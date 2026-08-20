@@ -40,6 +40,9 @@ def test_upgrade_head_creates_full_schema(tmp_path, monkeypatch):
         "organization_plan_items",
         "face_tracks",
         "face_corrections",
+        "skin_appearance_references",
+        "face_mask_tracks",
+        "skin_appearance_targets",
     }
     assert expected <= names
 
@@ -148,6 +151,88 @@ def test_open_legacy_db_at_older_revision_migrates_forward(tmp_path, monkeypatch
     assert "review_status" in {c["name"] for c in inspector.get_columns("shots")}
     assert "source_hash" in {c["name"] for c in inspector.get_columns("media_assets")}
     engine3.dispose()
+
+
+def test_previous_head_upgrades_and_face_rows_remain_readable(tmp_path, monkeypatch):
+    """A database at the previous head (d3e4f5a6b7c8) upgrades to the new head
+    with existing ``FaceTrack``/``FaceCorrection`` rows intact."""
+    from sqlalchemy.orm import Session
+
+    db = tmp_path / "prev_head.sqlite3"
+    cfg, url = _alembic_config(db)
+    monkeypatch.setenv("COLORAI_DB_URL", url)
+    command.upgrade(cfg, "d3e4f5a6b7c8")
+
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO projects (name, created_at, updated_at) VALUES "
+                "('prev', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO media_assets (project_id, source_path, frame_rate, "
+                "timecode_format, status, created_at, updated_at) VALUES "
+                "(1, '/m.mov', 25.0, 'NDF', 'analyzed', '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO shots (asset_id, \"index\", start_frame, end_frame, "
+                "start_timecode, end_timecode, review_status, excused, created_at) "
+                "VALUES (1, 0, 0, 24, '00:00:00:00', '00:00:00:24', 'pending', 0, '2026-01-01 00:00:00')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO subjects (asset_id, name, name_confirmed, created_at) "
+                "VALUES (1, 'Alice', 0, '2026-01-01 00:00:00')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO skin_metrics (shot_id, subject_id, face_index, mean_b, mean_g, mean_r, "
+                "sample_pixels, created_at) VALUES (1, 1, 0, 0.3, 0.3, 0.5, 10, '2026-01-01 00:00:00')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO face_tracks (shot_id, skin_metric_id, subject_id, source_width, "
+                "source_height, keyframes, sample_count, tracked_count, coverage, max_gap, "
+                "skin_stability, median_bgr, state, created_at) VALUES "
+                "(1, 1, 1, 1920, 1080, '[ [0, 0.1, 0.1, 0.2, 0.2] ]', 1, 1, 1.0, 0.0, 0.01, '[0.3, 0.3, 0.5]', 'valid', '2026-01-01 00:00:00')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO face_corrections (shot_id, subject_id, skin_metric_id, face_track_id, "
+                "kind, parameters, reason, confidence, classification, state, enabled, created_at) VALUES "
+                "(1, 1, 1, 1, 'rgb_balance', '{\"gain\": [1.0, 1.0, 1.0]}', '', 0.8, 'skin_mismatch', 'suggested', 0, '2026-01-01 00:00:00')"
+            )
+        )
+    engine.dispose()
+
+    # Upgrade to the new head (adds skin targets + mask tracks + skin_target_id).
+    command.upgrade(cfg, "head")
+
+    inspector = inspect(create_engine(url))
+    assert inspector.has_table("skin_appearance_references")
+    assert inspector.has_table("face_mask_tracks")
+    assert inspector.has_table("skin_appearance_targets")
+    assert "skin_target_id" in {c["name"] for c in inspector.get_columns("face_corrections")}
+
+    # Existing face rows remain readable through the ORM.
+    from colorai.project.models import FaceCorrection, FaceTrack
+    from colorai.project.store import ProjectStore
+
+    with ProjectStore.open(db).session() as session:
+        assert session.query(FaceTrack).count() == 1
+        assert session.query(FaceCorrection).count() == 1
+        assert session.query(FaceCorrection).first().kind == "rgb_balance"
+        assert session.query(FaceCorrection).first().skin_target_id is None
+
 
 
 def test_open_legacy_db_with_empty_version_table(tmp_path):
