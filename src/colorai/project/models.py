@@ -648,6 +648,7 @@ class SkinAppearanceReference(Base):
     )
     frame_index: Mapped[int | None] = mapped_column(Integer)
     crop_geometry: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
@@ -688,6 +689,7 @@ class FaceMaskTrack(Base):
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="valid")
     review_state: Mapped[str] = mapped_column(String(32), nullable=False, default="unreviewed")
     review_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    human_approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     shot: Mapped[Shot] = relationship()
@@ -715,7 +717,11 @@ class SkinAppearanceTarget(Base):
     reference_id: Mapped[int | None] = mapped_column(
         ForeignKey("skin_appearance_references.id", ondelete="SET NULL"), nullable=True
     )
+    mask_track_id: Mapped[int | None] = mapped_column(
+        ForeignKey("face_mask_tracks.id", ondelete="SET NULL"), nullable=True
+    )
     profile: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    canonical_profile: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     approved_preview_parameters: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="suggested")
     rationale: Mapped[str] = mapped_column(Text, nullable=False, default="")

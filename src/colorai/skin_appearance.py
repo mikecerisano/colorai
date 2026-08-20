@@ -192,11 +192,12 @@ def derive_skin_appearance_parameters(
 ) -> SkinAppearanceParameters:
     """Derive bounded chroma-only parameters moving ``candidate`` toward ``target``.
 
-    ``candidate`` and ``target`` are masked profiles (as returned by
-    :func:`masked_skin_profile`) carrying ``mean_ab`` and, optionally,
-    ``spread_ab``. ``ab_offset`` shifts the candidate's opponent-chroma centre
-    toward the target's; ``ab_scale`` pulls its spread toward the target's.
-    Both are softened by ``strength`` and clamped to the version-one bounds.
+    ``candidate`` and ``target`` are masked profiles carrying ``mean_ab`` and,
+    optionally, ``spread_ab``. The returned ``ab_offset``/``ab_scale`` are the
+    **full, unscaled** transform toward the target; ``strength`` is stored as-is
+    and is applied exactly once at compositor time (see
+    :func:`apply_skin_appearance`). This keeps derived and manually proposed
+    parameters on one consistent contract.
     """
     if not (0.0 <= strength <= 1.0):
         raise ValueError("strength must be in [0, 1]")
@@ -204,18 +205,17 @@ def derive_skin_appearance_parameters(
     c_mean = candidate.get("mean_ab", [0.0, 0.0])
     t_mean = target.get("mean_ab", [0.0, 0.0])
     ab_offset = (
-        _clip_offset((t_mean[0] - c_mean[0]) * strength),
-        _clip_offset((t_mean[1] - c_mean[1]) * strength),
+        _clip_offset(t_mean[0] - c_mean[0]),
+        _clip_offset(t_mean[1] - c_mean[1]),
     )
 
     c_spread = candidate.get("spread_ab")
     t_spread = target.get("spread_ab")
     if c_spread is not None and t_spread is not None and len(c_spread) == 2 and len(t_spread) == 2:
-        def _scale(c: float, t: float) -> float:
-            raw = (t / c) if abs(c) > 1e-9 else 1.0
-            return 1.0 + (_clip_scale(raw) - 1.0) * strength
-
-        ab_scale = (_scale(c_spread[0], t_spread[0]), _scale(c_spread[1], t_spread[1]))
+        ab_scale = (
+            _clip_scale((t_spread[0] / c_spread[0]) if abs(c_spread[0]) > 1e-9 else 1.0),
+            _clip_scale((t_spread[1] / c_spread[1]) if abs(c_spread[1]) > 1e-9 else 1.0),
+        )
     else:
         ab_scale = (1.0, 1.0)
 
@@ -226,6 +226,38 @@ def derive_skin_appearance_parameters(
         ab_scale=(float(ab_scale[0]), float(ab_scale[1])),
         strength=float(strength),
     )
+
+
+def apply_profile_transform(
+    profile: dict[str, list[float]], params: SkinAppearanceParameters
+) -> dict[str, list[float]]:
+    """Apply a validated appearance transform to a masked profile in OKLab.
+
+    Produces the canonical target profile for matching: the source profile's
+    opponent chroma shifted/scaled by the *effective* transform (offset/scale
+    softened by ``strength`` exactly once). This is the single authoritative
+    "what this person's skin should look like" used by matching.
+    """
+    eff_offset = (
+        params.ab_offset[0] * params.strength,
+        params.ab_offset[1] * params.strength,
+    )
+    eff_scale = (
+        1.0 + (params.ab_scale[0] - 1.0) * params.strength,
+        1.0 + (params.ab_scale[1] - 1.0) * params.strength,
+    )
+    mean = profile.get("mean_ab", [0.0, 0.0])
+    spread = profile.get("spread_ab", [0.0, 0.0])
+    return {
+        "mean_ab": [
+            (mean[0] + eff_offset[0]) * eff_scale[0],
+            (mean[1] + eff_offset[1]) * eff_scale[1],
+        ],
+        "spread_ab": [
+            spread[0] * eff_scale[0],
+            spread[1] * eff_scale[1],
+        ],
+    }
 
 
 def apply_skin_appearance(
@@ -245,10 +277,21 @@ def apply_skin_appearance(
     if lab.shape[:2] != alpha.shape:
         raise ValueError("alpha mask must match the image height/width")
 
+    # Apply strength exactly once here: offset/scale are the full unscaled
+    # transform (from derive or a manual proposal), softened toward identity.
+    eff_offset = (
+        params.ab_offset[0] * params.strength,
+        params.ab_offset[1] * params.strength,
+    )
+    eff_scale = (
+        1.0 + (params.ab_scale[0] - 1.0) * params.strength,
+        1.0 + (params.ab_scale[1] - 1.0) * params.strength,
+    )
+
     a = lab[..., 1]
     b = lab[..., 2]
-    new_a = (a + params.ab_offset[0]) * params.ab_scale[0]
-    new_b = (b + params.ab_offset[1]) * params.ab_scale[1]
+    new_a = (a + eff_offset[0]) * eff_scale[0]
+    new_b = (b + eff_offset[1]) * eff_scale[1]
 
     a_out = a * (1.0 - alpha) + new_a * alpha
     b_out = b * (1.0 - alpha) + new_b * alpha

@@ -89,11 +89,65 @@ def test_excess_positive_a_derives_negative_bounded_offset():
     assert -0.04 <= params.ab_offset[1] <= 0.04
 
 
-def test_derive_clips_offset_and_softens_scale_by_strength():
+def test_derive_clips_offset_and_scale_to_bounds():
     candidate = {"mean_ab": [0.0, 0.0], "spread_ab": [0.01, 0.01]}
     target = {"mean_ab": [0.1, 0.0], "spread_ab": [0.02, 0.01]}
     params = derive_skin_appearance_parameters(candidate, target, strength=0.5)
-    # offset = 0.1 * 0.5 = 0.05 -> clipped to 0.04
+    # offset is the full (unscaled) shift, clipped to the bound.
     assert params.ab_offset[0] == pytest.approx(0.04)
-    # scale raw = 2.0 -> clipped to 1.15 -> softened: 1 + (1.15-1)*0.5 = 1.075
-    assert params.ab_scale[0] == pytest.approx(1.075)
+    # scale is the full (unscaled) spread ratio, clipped to the bound.
+    assert params.ab_scale[0] == pytest.approx(1.15)
+    # strength is stored verbatim and applied once at compositor time.
+    assert params.strength == 0.5
+
+
+def _transform_a(params, a, b=0.0):
+    # Effective transform used by apply_skin_appearance for a single (a, b).
+    eff_offset = (params.ab_offset[0] * params.strength, params.ab_offset[1] * params.strength)
+    eff_scale = (1.0 + (params.ab_scale[0] - 1.0) * params.strength,
+                 1.0 + (params.ab_scale[1] - 1.0) * params.strength)
+    return (a + eff_offset[0]) * eff_scale[0], (b + eff_offset[1]) * eff_scale[1]
+
+
+def test_strength_zero_is_identity_half_is_half_full_is_full():
+    params = SkinAppearanceParameters(
+        version=1, luma_mode="preserve", ab_offset=(-0.03, 0.0), ab_scale=(1.0, 1.0), strength=1.0
+    )
+    assert _transform_a(params, 0.05) == pytest.approx((0.02, 0.0))
+
+    full = SkinAppearanceParameters(
+        version=1, luma_mode="preserve", ab_offset=(-0.03, 0.0), ab_scale=(1.0, 1.0), strength=1.0
+    )
+    half = SkinAppearanceParameters(
+        version=1, luma_mode="preserve", ab_offset=(-0.03, 0.0), ab_scale=(1.0, 1.0), strength=0.5
+    )
+    zero = SkinAppearanceParameters(
+        version=1, luma_mode="preserve", ab_offset=(-0.03, 0.0), ab_scale=(1.0, 1.0), strength=0.0
+    )
+    assert _transform_a(zero, 0.05) == pytest.approx((0.05, 0.0))
+    assert _transform_a(half, 0.05)[0] == pytest.approx(0.05 - 0.015)
+    assert _transform_a(full, 0.05)[0] == pytest.approx(0.05 - 0.03)
+
+
+def test_strength_is_applied_exactly_once_in_compositor():
+    # A manual proposal with a non-zero offset and strength 0.5 must produce a
+    # half-strength result, not a full-strength result (no double application).
+    params = _params(offset=(-0.02, 0.0), strength=0.5)
+    rgb = np.full((4, 4, 3), [0.55, 0.30, 0.21])
+    lab_before = rgb_linear_to_oklab(rgb)[..., 1]
+    out = apply_skin_appearance(rgb, params, np.ones((4, 4)))
+    lab_after = rgb_linear_to_oklab(out)[..., 1]
+    delta = float((lab_before - lab_after).mean())
+    assert delta == pytest.approx(0.02 * 0.5, abs=1e-6)
+
+
+def test_apply_profile_transform_matches_compositor_effective_shift():
+    from colorai.skin_appearance import apply_profile_transform
+
+    profile = {"mean_ab": [0.03, 0.01], "spread_ab": [0.02, 0.02]}
+    params = SkinAppearanceParameters(
+        version=1, luma_mode="preserve", ab_offset=(-0.03, 0.0), ab_scale=(1.0, 1.0), strength=1.0
+    )
+    canonical = apply_profile_transform(profile, params)
+    assert canonical["mean_ab"][0] == pytest.approx(0.0)
+    assert canonical["mean_ab"][1] == pytest.approx(0.01)
