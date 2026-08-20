@@ -76,6 +76,7 @@ def _legacy_chain(inspector) -> list[tuple[str, bool]]:
         ("f3c5d7e9a1b2", "bbox_x" in columns("skin_metrics")),
         ("a6b8c9d1e2f3", "name_suggestions" in tables and "name_confirmed" in columns("subjects")),
         ("c1d2e3f4a5b6", "organization_plans" in tables and "organization_plan_groups" in tables and "organization_plan_items" in tables),
+        ("d3e4f5a6b7c8", "face_tracks" in tables and "face_corrections" in tables),
     ]
 
 

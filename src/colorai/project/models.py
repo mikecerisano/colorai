@@ -527,7 +527,88 @@ class OrganizationPlanItem(Base):
     human_override_reason: Mapped[str | None] = mapped_column(Text)
 
     plan: Mapped[OrganizationPlan] = relationship(back_populates="items")
+    shot: Mapped[Shot] = relationship(foreign_keys=[shot_id])
+
+
+class FaceTrack(Base):
+    """A persisted temporal face track for one detected face in a shot.
+
+    Records sampled keyframes (normalized ``[x, y, w, h]`` boxes relative to
+    the source frame), quality metrics, and state. Built from the same
+    subject/face selected on the representative still; used by the shared mask
+    compositor for preview and render. The source asset stays read-only.
+    """
+
+    __tablename__ = "face_tracks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shot_id: Mapped[int] = mapped_column(
+        ForeignKey("shots.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    skin_metric_id: Mapped[int] = mapped_column(
+        ForeignKey("skin_metrics.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    subject_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source_width: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_height: Mapped[int] = mapped_column(Integer, nullable=False)
+    analysis_scale: Mapped[int | None] = mapped_column(Integer)
+    keyframes: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tracked_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    coverage: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    max_gap: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    skin_stability: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    median_bgr: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="valid")
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
     shot: Mapped[Shot] = relationship()
+
+
+class FaceCorrection(Base):
+    """A human-reviewable, face-local correction for one subject in a shot.
+
+    Separate from whole-frame ``Correction`` rows. Version one supports only
+    ``kind="rgb_balance"`` with per-channel linear gains clamped to
+    ``[0.90, 1.10]``. ``enabled`` can become true only after approval in the
+    review UI; agents may only draft/revise suggestions.
+    """
+
+    __tablename__ = "face_corrections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shot_id: Mapped[int] = mapped_column(
+        ForeignKey("shots.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    subject_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    skin_metric_id: Mapped[int | None] = mapped_column(
+        ForeignKey("skin_metrics.id", ondelete="SET NULL"), nullable=True
+    )
+    face_track_id: Mapped[int | None] = mapped_column(
+        ForeignKey("face_tracks.id", ondelete="SET NULL"), nullable=True
+    )
+    reference_shot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shots.id", ondelete="SET NULL"), nullable=True
+    )
+    reference_group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shot_groups.id", ondelete="SET NULL"), nullable=True
+    )
+    kind: Mapped[str] = mapped_column(String(64), nullable=False, default="rgb_balance")
+    parameters: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    evidence: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    classification: Mapped[str] = mapped_column(String(32), nullable=False, default="skin_mismatch")
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="suggested")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+    shot: Mapped[Shot] = relationship(foreign_keys=[shot_id])
 
 
 # Silence unused-import lint for re-exported names.
@@ -548,5 +629,7 @@ __all__ = [
     "OrganizationPlan",
     "OrganizationPlanGroup",
     "OrganizationPlanItem",
+    "FaceTrack",
+    "FaceCorrection",
     "utcnow",
 ]
