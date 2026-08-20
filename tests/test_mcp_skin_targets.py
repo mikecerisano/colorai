@@ -145,3 +145,33 @@ def test_mcp_review_face_mask_evidence_records_review(tmp_path):
 
     out = mcp_server.review_face_mask_evidence(db, mask_id, "approved_for_proposal", "looks clean")
     assert out["review_state"] == "approved_for_proposal"
+
+
+def test_mcp_build_face_mask_track_uses_fallback_when_mediapipe_unavailable(tmp_path, monkeypatch):
+    """When MediaPipe is unavailable the MCP path must produce the labelled
+    fallback (detector=None), not fail every frame because a detector returns
+    None."""
+    import colorai.face_masks as fm
+
+    db, asset, shots, alice, group, metrics, track_ids = _store(tmp_path)
+
+    calls = {}
+
+    def spy(store, face_track_id, *, detector=None, samples=16):
+        calls["detector"] = detector
+        return type(
+            "Mask", (),
+            {
+                "id": 1, "state": "valid", "backend": "fallback",
+                "strategy": "face_oval_skin", "coverage": 1.0, "max_gap": 0.0,
+                "review_state": "unreviewed", "review_reason": "",
+            },
+        )()
+
+    monkeypatch.setattr(fm, "landmark_backend_available", lambda: False)
+    monkeypatch.setattr(fm, "build_face_mask_track", spy)
+
+    out = mcp_server.build_face_mask_track(db, track_ids[0])
+    assert calls["detector"] is None
+    assert out["backend"] == "fallback"
+    assert out["strategy"] == "face_oval_skin"

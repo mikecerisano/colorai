@@ -374,6 +374,14 @@ def _validate_skin_appearance_scope(session, correction, shot) -> None:
             f"face correction {correction.id} mask track must be reviewed "
             f"'approved_for_proposal' (currently {mask.review_state!r})"
         )
+    if mask.backend == "fallback" and not mask.human_approved:
+        raise ValidationError(
+            f"face correction {correction.id} uses a fallback mask without explicit human approval"
+        )
+    if mask.subject_id != correction.subject_id:
+        raise ValidationError(f"face correction {correction.id} mask subject mismatch")
+    if mask.shot_id != correction.shot_id:
+        raise ValidationError(f"face correction {correction.id} mask shot mismatch")
     if mask.coverage < MIN_COVERAGE:
         raise ValidationError(f"face correction {correction.id} mask coverage below threshold")
     if mask.max_gap > MAX_GAP_RATIO:
@@ -392,12 +400,32 @@ def _validate_skin_appearance_scope(session, correction, shot) -> None:
         raise ValidationError(f"face correction {correction.id} skin target subject mismatch")
     if correction.reference_group_id is not None and target.group_id != correction.reference_group_id:
         raise ValidationError(f"face correction {correction.id} skin target group scope mismatch")
+    _validate_canonical_profile(correction, target)
     if target.subject_id is not None:
         from colorai.project.models import Subject
 
         subject = session.get(Subject, target.subject_id)
         if subject is None or subject.asset_id != shot.asset_id:
             raise ValidationError(f"face correction {correction.id} skin target subject/asset mismatch")
+
+
+def _validate_canonical_profile(correction, target) -> None:
+    """Require a finite, in-bounds canonical target profile and parameters."""
+    canonical = target.canonical_profile or {}
+    for key in ("mean_ab", "spread_ab"):
+        values = canonical.get(key)
+        if not isinstance(values, (list, tuple)) or len(values) != 2:
+            raise ValidationError(f"face correction {correction.id} target {key} is malformed")
+        for v in values:
+            f = float(v)
+            if f != f or f in (float("inf"), float("-inf")):
+                raise ValidationError(f"face correction {correction.id} target {key} is non-finite")
+            if not (-0.5 <= f <= 0.5):
+                raise ValidationError(f"face correction {correction.id} target {key} out of bounds")
+    try:
+        validate_skin_appearance_parameters(correction.parameters or {})
+    except ValueError as exc:
+        raise ValidationError(f"face correction {correction.id} has invalid parameters: {exc}")
 
 
 def _validate_face_correction_row(session, correction) -> None:

@@ -67,7 +67,7 @@ def _target_fixture(tmp_path):
             face_track_id=track.id, shot_id=shots[0].id, subject_id=alice.id,
             backend="fallback", backend_version="0", strategy="face_oval_skin",
             landmark_keyframes=[], coverage=1.0, max_gap=0.0,
-            review_state="approved_for_proposal",
+            review_state="approved_for_proposal", human_approved=True,
         )
         session.add(mask)
         session.flush()
@@ -99,7 +99,7 @@ def test_skin_target_workspace_shows_reference_mask_and_disabled_proposal(tmp_pa
     client, ids = _target_fixture(tmp_path)
     html = client.get("/").text
     assert "Skin target" in html
-    assert "accurate_skin_reference" in html
+    assert "accurate reference" in html
     assert "mask reviewed" in html
     assert "Approve target" in html
     assert "Approve mask" in html

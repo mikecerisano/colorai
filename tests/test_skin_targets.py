@@ -453,3 +453,104 @@ def test_propose_skin_appearance_rejects_cross_group_candidate(tmp_path):
                         "ab_offset": [0.0, 0.0], "ab_scale": [1.0, 1.0], "strength": 0.5},
             reason="x", confidence=0.5,
         )
+
+
+def test_suggest_skin_target_resolves_non_aligned_mask_ids(tmp_path):
+    """A FaceMaskTrack's id is independent of its FaceTrack's id; the target must
+    persist the *associated* mask id, not assume they align."""
+    store, asset, shots, alice, group, metrics = _fixture(tmp_path, n_shots=2)
+    from colorai.skin_targets import suggest_skin_target
+
+    with store.session() as session:
+        t0 = FaceTrack(
+            shot_id=shots[0].id, skin_metric_id=metrics[0].id, subject_id=alice.id,
+            source_width=1920, source_height=1080, analysis_scale=480,
+            keyframes=[[0, 0.1, 0.1, 0.2, 0.2]],
+            sample_count=1, tracked_count=1, coverage=1.0, max_gap=0.0,
+            skin_stability=0.01, median_bgr=[0.3, 0.3, 0.5], state="valid",
+        )
+        session.add(t0)
+        session.flush()
+        t1 = FaceTrack(
+            shot_id=shots[1].id, skin_metric_id=metrics[1].id, subject_id=alice.id,
+            source_width=1920, source_height=1080, analysis_scale=480,
+            keyframes=[[25, 0.1, 0.1, 0.2, 0.2]],
+            sample_count=1, tracked_count=1, coverage=1.0, max_gap=0.0,
+            skin_stability=0.01, median_bgr=[0.3, 0.3, 0.5], state="valid",
+        )
+        session.add(t1)
+        session.flush()
+        # Create masks in reverse order so the mask ids do NOT align with track ids.
+        mask_t1 = FaceMaskTrack(
+            face_track_id=t1.id, shot_id=shots[1].id, subject_id=alice.id,
+            backend="landmark", backend_version="1", strategy="landmark_skin",
+            landmark_keyframes=[], coverage=1.0, max_gap=0.0,
+            review_state="approved_for_proposal",
+        )
+        session.add(mask_t1)
+        session.flush()
+        mask_t0 = FaceMaskTrack(
+            face_track_id=t0.id, shot_id=shots[0].id, subject_id=alice.id,
+            backend="landmark", backend_version="1", strategy="landmark_skin",
+            landmark_keyframes=[], coverage=1.0, max_gap=0.0,
+            review_state="approved_for_proposal",
+        )
+        session.add(mask_t0)
+        session.flush()
+        t0_id, mask_t0_id = t0.id, mask_t0.id
+        session.commit()
+
+    assert mask_t0_id != t0_id  # proves the fixture has non-aligned ids
+
+    target = suggest_skin_target(
+        store, subject_id=alice.id, group_id=group.id, reference_id=None,
+        face_track_id=t0_id,
+        parameters={"version": 1, "space": "oklab", "luma_mode": "preserve",
+                    "ab_offset": [-0.01, 0.0], "ab_scale": [1.0, 1.0], "strength": 0.5},
+        rationale="x", confidence=0.5,
+        profile={"mean_ab": [0.03, 0.02], "spread_ab": [0.02, 0.02]},
+    )
+    assert target.mask_track_id == mask_t0_id
+
+
+def test_match_derives_toward_canonical_not_source_profile(tmp_path):
+    """A red source + an approved corrective target must make candidates move
+    toward the corrected canonical profile, not the original red source."""
+    store, asset, shots, alice, group, metrics, track_ids, mask_ids = _reviewed_tracks(tmp_path)
+    from colorai.skin_targets import (
+        approve_skin_target,
+        create_skin_reference,
+        match_skin_target_to_group,
+        suggest_skin_target,
+    )
+
+    # Both shots are reddish (high R relative to G/B).
+    with store.session() as session:
+        for m in metrics:
+            m.mean_b = 0.25
+            m.mean_g = 0.30
+            m.mean_r = 0.50
+        session.commit()
+
+    ref = create_skin_reference(
+        store, subject_id=alice.id, group_id=group.id,
+        source_shot_id=shots[0].id, frame_index=shots[0].start_frame,
+        role="accurate_skin_reference",
+    )
+    # Approved corrective target: reduce excess red (negative a offset).
+    target = suggest_skin_target(
+        store, subject_id=alice.id, group_id=group.id, reference_id=ref.id,
+        face_track_id=track_ids[0],
+        parameters={"version": 1, "space": "oklab", "luma_mode": "preserve",
+                    "ab_offset": [-0.03, 0.0], "ab_scale": [1.0, 1.0], "strength": 1.0},
+        rationale="neutralize red", confidence=0.9,
+    )
+    approve_skin_target(store, target.id)
+
+    result = match_skin_target_to_group(store, target_id=target.id, group_id=group.id)
+    ready = [c for c in result["candidates"] if c["state"] == "ready"]
+    assert len(ready) == 2
+    # The non-reference candidate must be pulled toward the *corrected* (less
+    # red) canonical profile, i.e. a negative a-offset, not ~0.
+    cand = next(c for c in ready if c["shot_id"] == shots[1].id)
+    assert cand["parameters"]["ab_offset"][0] < -0.01

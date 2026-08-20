@@ -1524,12 +1524,13 @@ def list_skin_appearance_references(project: str, asset_id: int) -> list[dict]:
 def build_face_mask_track(project: str, face_track_id: int, samples: int = 16) -> dict:
     """Build a reviewable temporal face-mask track (does not approve a grade)."""
     from colorai.face_masks import build_face_mask_track as _build
-    from colorai.face_masks import mediapipe_landmark_detector
+    from colorai.face_masks import landmark_backend_available, mediapipe_landmark_detector
 
     try:
-        # Use the optional landmark backend when available; the builder keeps
-        # the labelled fallback when it is not.
-        detector = mediapipe_landmark_detector
+        # Distinguish "backend unavailable" (use the labelled fallback) from
+        # "landmark detection failed for a frame" (kept as a low-coverage
+        # failure inside the builder).
+        detector = mediapipe_landmark_detector if landmark_backend_available() else None
         mask = _build(_open(project), face_track_id, detector=detector, samples=samples)
         return {
             "id": mask.id,

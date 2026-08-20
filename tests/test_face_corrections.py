@@ -262,6 +262,28 @@ def test_skin_appearance_changes_cheek_but_not_eye_lip_or_second_face():
     assert np.array_equal(out[4, 4], image[4, 4])          # background
 
 
+def test_skin_appearance_leaves_non_skin_inside_box_unchanged():
+    # A large non-skin (white) patch inside the face box but outside the
+    # landmark polygons must be protected by the conservative colour-skin
+    # intersection. Its centre is far enough from the skin edge that feathering
+    # does not reach it.
+    image = _two_face_image()
+    image[8:32, 40:72] = (255, 255, 255)  # large white non-skin patch inside box
+    spec = FaceCorrectionSpec(
+        id=1,
+        kind="skin_appearance",
+        parameters=_skin_appearance_params(offset=(-0.02, 0.0)),
+        keyframes=((0, 0.1667, 0.0833, 0.5833, 0.6667),),
+        mask_geometry_keyframes=((0, _two_face_geometry()),),
+        source_width=96, source_height=96,
+    )
+    out = apply_face_corrections(image, [spec], frame_index=0)
+    # The centre of the non-skin patch is unchanged.
+    assert np.array_equal(out[18:24, 52:58], image[18:24, 52:58])
+    # The skin cheek still changed.
+    assert not np.array_equal(out[48, 40], image[48, 40])
+
+
 def test_derive_zero_strength_applies_identity_at_compositor():
     from colorai.skin_appearance import apply_profile_transform, derive_skin_appearance_parameters
 

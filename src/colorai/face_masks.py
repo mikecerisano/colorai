@@ -106,6 +106,18 @@ def mediapipe_landmark_detector(
 mediapipe_landmark_detector.backend_version = "face_landmarker_468"  # type: ignore[attr-defined]
 
 
+def landmark_backend_available() -> bool:
+    """True when the optional MediaPipe landmark backend can be imported.
+
+    Importability is the availability signal: MediaPipe Face Landmarker bundles
+    its model, so a missing import means "backend unavailable" (use the labelled
+    fallback), not "detection failed for this frame" (a low-coverage failure).
+    """
+    import importlib.util
+
+    return importlib.util.find_spec("mediapipe") is not None
+
+
 def _oval_polygon(nx: float, ny: float, nw: float, nh: float, points: int = 48) -> list[list[float]]:
     """A normalized ellipse polygon from a normalized ``(x, y, w, h)`` box."""
     cx, cy = nx + nw / 2.0, ny + nh / 2.0

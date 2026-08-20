@@ -214,12 +214,14 @@ def _enabled_skin_appearance_store(tmp_path, *, mask_review_state):
             backend="fallback", backend_version="0", strategy="face_oval_skin",
             landmark_keyframes=[[0, {"oval": [[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]], "eyes": [], "brows": [], "lips": [], "hairline": []}]],
             coverage=1.0, max_gap=0.0, review_state=mask_review_state,
+            human_approved=True,
         )
         session.add(mask)
         session.flush()
         target = SkinAppearanceTarget(
             subject_id=alice.id, group_id=group.id, reference_id=None,
             profile={"mean_ab": [0.0, 0.0], "spread_ab": [0.01, 0.01]},
+            canonical_profile={"mean_ab": [0.0, 0.0], "spread_ab": [0.01, 0.01]},
             approved_preview_parameters={}, state="approved",
         )
         session.add(target)
@@ -270,6 +272,42 @@ def test_render_aborts_for_enabled_skin_appearance_with_cross_scope_target(tmp_p
 
     out = tmp_path / "no_output.mp4"
     with pytest.raises(ValidationError, match="scope"):
+        render_master(store, asset.id, out)
+    assert not out.exists()
+
+
+def test_render_aborts_for_fallback_mask_without_human_approval(tmp_path):
+    from colorai.face_corrections import ValidationError
+    from colorai.project import FaceMaskTrack
+
+    store, asset = _enabled_skin_appearance_store(
+        tmp_path, mask_review_state="approved_for_proposal"
+    )
+    with store.session() as session:
+        m = session.query(FaceMaskTrack).one()
+        m.human_approved = False
+        session.commit()
+
+    out = tmp_path / "no_output.mp4"
+    with pytest.raises(ValidationError, match="human approval"):
+        render_master(store, asset.id, out)
+    assert not out.exists()
+
+
+def test_render_aborts_for_malformed_canonical_profile(tmp_path):
+    from colorai.face_corrections import ValidationError
+    from colorai.project import SkinAppearanceTarget
+
+    store, asset = _enabled_skin_appearance_store(
+        tmp_path, mask_review_state="approved_for_proposal"
+    )
+    with store.session() as session:
+        t = session.query(SkinAppearanceTarget).one()
+        t.canonical_profile = {"mean_ab": [float("nan"), 0.0], "spread_ab": [0.01, 0.01]}
+        session.commit()
+
+    out = tmp_path / "no_output.mp4"
+    with pytest.raises(ValidationError, match="non-finite"):
         render_master(store, asset.id, out)
     assert not out.exists()
 

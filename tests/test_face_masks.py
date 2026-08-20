@@ -167,3 +167,28 @@ def test_validate_face_mask_requires_valid_quality(tmp_path):
         session.commit()
     with pytest.raises(ValueError, match="coverage"):
         validate_face_mask_track(store, mask_id, require_review=False)
+
+
+def test_fallback_mask_requires_explicit_human_approval(tmp_path):
+    store, asset, shot, alice, metric_id, track_id = _fixture(tmp_path)
+    with store.session() as session:
+        mask = FaceMaskTrack(
+            face_track_id=track_id, shot_id=shot.id, subject_id=alice.id,
+            backend="fallback", backend_version="0", strategy=FALLBACK_STRATEGY,
+            landmark_keyframes=[], coverage=1.0, max_gap=0.0,
+            review_state="approved_for_proposal", human_approved=False,
+        )
+        session.add(mask)
+        session.flush()
+        mask_id = mask.id
+        session.commit()
+
+    with pytest.raises(ValueError, match="human approval"):
+        validate_face_mask_track(store, mask_id, require_review=True)
+
+    # Once a human explicitly approves, the fallback is usable.
+    with store.session() as session:
+        m = session.get(FaceMaskTrack, mask_id)
+        m.human_approved = True
+        session.commit()
+    assert validate_face_mask_track(store, mask_id, require_review=True).id == mask_id

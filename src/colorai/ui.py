@@ -329,6 +329,9 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                     "source_shot_id": r.source_shot_id,
                     "frame_index": r.frame_index,
                     "state": r.state,
+                    "profile": r.profile,
+                    "managed_path": r.managed_path,
+                    "crop_geometry": r.crop_geometry,
                 }
             )
         targets_by_scope: dict[tuple, list[dict]] = {}
@@ -340,6 +343,8 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                     "reference_id": t.reference_id,
                     "reference_role": ref.role if ref else None,
                     "profile": t.profile,
+                    "canonical_profile": t.canonical_profile,
+                    "mask_track_id": t.mask_track_id,
                     "parameters": t.approved_preview_parameters,
                     "state": t.state,
                     "rationale": t.rationale,
@@ -359,6 +364,7 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                 "state": m.state,
                 "review_state": m.review_state,
                 "review_reason": m.review_reason,
+                "human_approved": m.human_approved,
             }
 
         def skin_targets_for_group(g: ShotGroup) -> list[dict]:
@@ -373,6 +379,9 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                     continue
                 track = latest_track_by_metric.get(face_metrics[0].id)
                 mask = masks_by_track.get(track.id) if track else None
+                reviewed = bool(mask and mask["review_state"] == "approved_for_proposal")
+                if reviewed and mask["backend"] == "fallback" and not mask.get("human_approved"):
+                    reviewed = False
                 out.append(
                     {
                         "subject_id": subj.id,
@@ -380,7 +389,7 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                         "references": refs_by_scope.get((subj.id, g.id), []),
                         "targets": targets_by_scope.get((subj.id, g.id), []),
                         "mask": mask,
-                        "has_reviewed_mask": bool(mask and mask["review_state"] == "approved_for_proposal"),
+                        "has_reviewed_mask": reviewed,
                     }
                 )
             return out

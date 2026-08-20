@@ -323,15 +323,20 @@
             </div>
             {% endif %}
             {% for r in st.references %}
-            <div class="row"><span class="badge {{ 'approved' if r.state == 'active' else '' }}">{{ r.role }}</span><span class="muted">{{ r.source_kind }} · shot {{ r.source_shot_id or '—' }}</span></div>
+            <div class="row">
+              <span class="badge {{ 'approved' if r.state == 'active' else '' }}">{{ 'accurate reference' if r.role == 'accurate_skin_reference' else 'creative direction' }}</span>
+              <span class="muted">{{ r.source_kind }} · shot {{ r.source_shot_id or '—' }}</span>
+              {% if r.profile and r.profile.mean_ab %}<span class="muted">source ab [{{ r.profile.mean_ab|join(', ') }}]</span>{% endif %}
+            </div>
             {% endfor %}
             {% for t in st.targets %}
             <div class="corr-row {{ '' if t.state == 'approved' else 'off' }}" style="align-items:flex-start">
               <div style="flex:1">
                 <span class="badge {{ t.state }}">{{ t.state }}</span>
-                <span class="muted">role {{ t.reference_role or '—' }} · conf {{ t.confidence }}</span>
+                <span class="muted">{{ 'accurate reference' if t.reference_role == 'accurate_skin_reference' else 'creative direction' if t.reference_role else 'no reference' }} · conf {{ t.confidence }}</span>
                 <div class="muted">{{ t.rationale }}</div>
                 <div class="muted">ab_offset [{{ (t.parameters.ab_offset or [0,0])|join(', ') }}] · strength {{ t.parameters.strength or 0 }}</div>
+                {% if t.canonical_profile and t.canonical_profile.mean_ab %}<div class="muted">canonical ab [{{ t.canonical_profile.mean_ab|join(', ') }}]</div>{% endif %}
               </div>
               {% if t.state == 'suggested' %}
               <button type="button" onclick="skinTargetAction({{ t.id }}, 'approve')">Approve target</button>
