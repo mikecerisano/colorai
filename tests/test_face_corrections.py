@@ -90,3 +90,163 @@ def test_face_correction_cannot_enable_without_approval_by_default():
         session.refresh(correction)
         assert correction.enabled is False
         assert correction.state == "suggested"
+
+
+# -- pure mask compositor ----------------------------------------------------
+
+import cv2
+import numpy as np
+import pytest
+
+from colorai.face_corrections import (
+    FaceCorrectionSpec,
+    _interpolate_box,
+    _max_gap_ratio,
+    apply_face_corrections,
+    validate_gain,
+)
+
+
+def _skin_bgr():
+    # A YCrCb skin-like value (BGR) so colorai.skin.skin_mask returns True.
+    return (89, 97, 148)
+
+
+def _spec(shot_region, gain=(1.10, 1.0, 1.0), keyframes=((0, 0.25, 0.25, 0.5, 0.5),)):
+    return FaceCorrectionSpec(id=1, gain=tuple(gain), keyframes=tuple(keyframes), source_width=64, source_height=64)
+
+
+def _image_with_skin_region():
+    img = np.zeros((64, 64, 3), dtype=np.uint8)
+    img[:, :] = (0, 128, 0)  # green background (RGB)
+    bgr = _skin_bgr()
+    img[16:48, 16:48] = (bgr[2], bgr[1], bgr[0])  # skin-like RGB
+    return img
+
+
+def test_validate_gain_caps():
+    assert validate_gain([1.0, 1.0, 1.0]) == (1.0, 1.0, 1.0)
+    assert validate_gain([0.90, 1.10, 0.95]) == (0.90, 1.10, 0.95)
+    with pytest.raises(ValueError):
+        validate_gain([1.0, 1.2, 1.0])
+    with pytest.raises(ValueError):
+        validate_gain([0.5, 1.0, 1.0])
+    with pytest.raises(ValueError):
+        validate_gain([1.0, 1.0])
+
+
+def test_interpolate_box_clamps_and_interpolates():
+    kf = ((0, 0.1, 0.1, 0.2, 0.2), (10, 0.3, 0.3, 0.4, 0.4))
+    assert _interpolate_box(kf, -5) == (0.1, 0.1, 0.2, 0.2)
+    assert _interpolate_box(kf, 5) == pytest.approx((0.2, 0.2, 0.3, 0.3))
+    assert _interpolate_box(kf, 99) == (0.3, 0.3, 0.4, 0.4)
+
+
+def test_max_gap_ratio():
+    kf = ((0, 0.1, 0.1, 0.2, 0.2), (10, 0.1, 0.1, 0.2, 0.2))
+    # duration = 11 frames; gaps: start->0 = 0, 0->10 = 9, 10->end=0 => 9/11
+    assert _max_gap_ratio(kf, 0, 10) == pytest.approx(9 / 11)
+    assert _max_gap_ratio([], 0, 10) == 1.0
+
+
+def test_apply_face_corrections_changes_skin_not_background():
+    img = _image_with_skin_region()
+    out = apply_face_corrections(img, [_spec(16, gain=(1.10, 1.0, 1.0))], frame_index=0)
+    # Background (non-skin, outside box) is bit-identical.
+    assert (out[0:8, 0:8] == img[0:8, 0:8]).all()
+    # The skin region inside the box changed (red gain applied).
+    assert not (out[20:40, 20:40] == img[20:40, 20:40]).all()
+
+
+def test_apply_face_corrections_leaves_second_face_unchanged():
+    img = np.zeros((64, 64, 3), dtype=np.uint8)
+    img[:, :] = (0, 128, 0)  # green background (RGB)
+    bgr = _skin_bgr()
+    rgb = (bgr[2], bgr[1], bgr[0])
+    img[8:24, 8:24] = rgb    # participant A
+    img[40:56, 40:56] = rgb  # participant B (fully outside A's box)
+    spec = FaceCorrectionSpec(
+        id=1, gain=(1.10, 1.0, 1.0),
+        keyframes=((0, 0.125, 0.125, 0.25, 0.25),),
+        source_width=64, source_height=64,
+    )
+    out = apply_face_corrections(img, [spec], frame_index=0)
+    # A's box changed, but the second participant and background did not.
+    assert not (out[8:24, 8:24] == img[8:24, 8:24]).all()
+    assert (out[40:56, 40:56] == img[40:56, 40:56]).all()
+    assert (out[0:8, 0:8] == img[0:8, 0:8]).all()
+
+
+def test_apply_face_corrections_is_deterministic():
+    img = _image_with_skin_region()
+    spec = _spec(16, gain=(0.95, 1.05, 1.10))
+    a = apply_face_corrections(img, [spec], frame_index=0)
+    b = apply_face_corrections(img, [spec], frame_index=0)
+    assert (a == b).all()
+
+
+def test_apply_face_corrections_empty_is_identity():
+    img = _image_with_skin_region()
+    assert (apply_face_corrections(img, [], frame_index=0) == img).all()
+
+
+# -- track builder -----------------------------------------------------------
+
+from colorai.face_corrections import build_face_track
+
+
+def _fake_extract(frame_boxes):
+    def extract(video_path, frame_index, out_path, fps=None, scale=None):
+        import cv2 as _cv2
+        import numpy as _np
+
+        _cv2.imwrite(
+            str(out_path), _np.full((270, 480, 3), _skin_bgr(), dtype=_np.uint8)
+        )
+        return out_path
+
+    return extract
+
+
+def test_build_face_track_success():
+    store, asset, shot, alice, metric = _fixture()
+
+    def detect(image):
+        return [(25, 30, 50, 60)]
+
+    track = build_face_track(store, metric.id, samples=16, scale=480, extract=_fake_extract(None), detect=detect)
+    assert track.state == "valid"
+    assert track.coverage == 1.0
+    assert len(track.keyframes) == 16
+
+
+def test_build_face_track_fails_on_low_coverage():
+    store, asset, shot, alice, metric = _fixture()
+
+    def detect(image):
+        return []
+
+    track = build_face_track(store, metric.id, samples=4, scale=480, extract=_fake_extract(None), detect=detect)
+    assert track.state == "failed"
+    assert track.coverage == 0.0
+    assert "coverage" in track.failure_reason
+
+
+def test_build_face_track_fails_on_excessive_gap():
+    store, asset, shot, alice, metric = _fixture()
+
+    def detect(image):
+        return [(25, 30, 50, 60)]
+
+    # Succeed on 12 of 16 samples (75% coverage) but miss four consecutive
+    # middle samples, leaving an untracked span above the 20% cap.
+    seen = {"n": 0}
+    def sparse_detect(image):
+        seen["n"] += 1
+        if seen["n"] in (7, 8, 9, 10):
+            return []
+        return [(25, 30, 50, 60)]
+
+    track = build_face_track(store, metric.id, samples=16, scale=480, extract=_fake_extract(None), detect=sparse_detect)
+    assert track.state == "failed"
+    assert "gap" in track.failure_reason
