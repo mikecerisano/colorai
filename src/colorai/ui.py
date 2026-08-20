@@ -1220,7 +1220,7 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
         try:
             mask = _review(
                 store, mask_track_id,
-                review_state=payload.review_state, reason=payload.reason,
+                review_state=payload.review_state, reason=payload.reason, author="human",
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

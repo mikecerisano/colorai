@@ -126,7 +126,7 @@ def _reviewed_tracks(tmp_path):
                 face_track_id=track.id, shot_id=m.shot_id, subject_id=alice.id,
                 backend="fallback", backend_version="0", strategy="face_oval_skin",
                 landmark_keyframes=[], coverage=1.0, max_gap=0.0,
-                review_state="approved_for_proposal",
+                review_state="approved_for_proposal", human_approved=True,
             )
             session.add(mask)
             session.flush()
@@ -137,20 +137,50 @@ def _reviewed_tracks(tmp_path):
 
 
 def test_external_reference_is_copied_by_hash_and_retains_provenance(tmp_path):
+    import cv2
+    import numpy as np
+
     store, asset, shots, alice, group, metrics = _fixture(tmp_path)
     reference = tmp_path / "accurate.jpg"
-    reference.write_bytes(b"pixels")
+    img = np.zeros((96, 96, 3), dtype=np.uint8)
+    img[:, :] = (0, 128, 0)  # green background (BGR)
+    img[20:60, 20:60] = (89, 97, 148)  # skin-like BGR face
+    cv2.imwrite(str(reference), img)
 
     from colorai.skin_targets import create_skin_reference
 
     created = create_skin_reference(
         store, subject_id=alice.id, group_id=group.id,
         external_path=reference, role="accurate_skin_reference",
+        crop_geometry={"x": 0.2, "y": 0.2, "w": 0.4, "h": 0.4},
     )
-    assert Path(created.managed_path).read_bytes() == b"pixels"
+    assert Path(created.managed_path).read_bytes() == reference.read_bytes()
     assert created.source_path == str(reference)
-    assert created.content_hash == hashlib.sha256(b"pixels").hexdigest()
+    assert created.content_hash == hashlib.sha256(reference.read_bytes()).hexdigest()
     assert created.source_kind == "external_image"
+    # The external reference was measured (not left as a zero placeholder).
+    assert created.profile is not None
+    assert created.profile["mean_ab"][0] > 0.0
+
+
+def test_external_reference_rejects_when_no_face_or_skin(tmp_path):
+    import cv2
+    import numpy as np
+
+    store, asset, shots, alice, group, metrics = _fixture(tmp_path)
+    reference = tmp_path / "no_face.jpg"
+    img = np.zeros((64, 64, 3), dtype=np.uint8)
+    img[:, :] = (0, 128, 0)  # no skin anywhere
+    cv2.imwrite(str(reference), img)
+
+    from colorai.skin_targets import create_skin_reference
+
+    with pytest.raises(ValueError, match="no detectable face/skin"):
+        create_skin_reference(
+            store, subject_id=alice.id, group_id=group.id,
+            external_path=reference, role="accurate_skin_reference",
+            crop_geometry={"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0},
+        )
 
 
 def test_external_reference_requires_existing_file(tmp_path):
@@ -288,7 +318,7 @@ def test_match_one_shot_is_qc_only(tmp_path):
             face_track_id=track.id, shot_id=shots[0].id, subject_id=alice.id,
             backend="fallback", backend_version="0", strategy="face_oval_skin",
             landmark_keyframes=[], coverage=1.0, max_gap=0.0,
-            review_state="approved_for_proposal",
+            review_state="approved_for_proposal", human_approved=True,
         ))
         session.flush()
         track_id = track.id

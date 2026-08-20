@@ -16,11 +16,18 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from colorai.color import bt709_to_linear
 from colorai.editorial import GROUP_KIND_SETUP, GROUP_KIND_VARIANT
-from colorai.face_masks import REVIEW_STATES, validate_face_mask_track
+from colorai.face import detect_faces
+from colorai.face_masks import (
+    MAX_GAP_RATIO,
+    MIN_COVERAGE,
+    REVIEW_STATES,
+    validate_face_mask_track,
+)
 from colorai.project.models import (
     FaceCorrection,
     FaceMaskTrack,
@@ -35,8 +42,11 @@ from colorai.project.models import (
     Subject,
 )
 from colorai.project.store import ProjectStore
+from colorai.skin import skin_mask
 from colorai.skin_appearance import (
+    apply_profile_transform,
     derive_skin_appearance_parameters,
+    masked_skin_profile,
     rgb_linear_to_oklab,
     validate_skin_appearance_parameters,
 )
@@ -91,6 +101,48 @@ def _bgr_mean_profile(mean_b: float, mean_g: float, mean_r: float) -> dict[str, 
     }
 
 
+def _measure_region_profile(image_bgr: np.ndarray, box: tuple[int, int, int, int]) -> dict | None:
+    """Measure a masked skin profile for one box, intersecting the conservative
+    colour skin classifier. Returns ``None`` when the box has no skin pixels."""
+    x, y, w, h = (int(v) for v in box)
+    if w <= 0 or h <= 0:
+        return None
+    region = image_bgr[y : y + h, x : x + w]
+    if region.size == 0:
+        return None
+    mask = skin_mask(region)
+    if not mask.any():
+        return None
+    rgb = cv2.cvtColor(region, cv2.COLOR_BGR2RGB).astype(np.float64) / 255.0
+    return masked_skin_profile(bt709_to_linear(rgb), mask.astype(np.float64))
+
+
+def _measure_external_profile(
+    image_bgr: np.ndarray, crop_geometry: dict | None, detect=detect_faces
+) -> dict | None:
+    """Measure a face/skin profile from an external image.
+
+    Uses ``crop_geometry`` (normalized ``x/y/w/h``) when supplied; otherwise
+    detects the largest face. Returns ``None`` when no face/skin can be
+    established (callers must then reject rather than default to a neutral
+    placeholder).
+    """
+    ah, aw = image_bgr.shape[:2]
+    if crop_geometry:
+        cx, cy, cw, ch = (
+            float(crop_geometry["x"]) * aw,
+            float(crop_geometry["y"]) * ah,
+            float(crop_geometry["w"]) * aw,
+            float(crop_geometry["h"]) * ah,
+        )
+        return _measure_region_profile(image_bgr, (int(cx), int(cy), int(cw), int(ch)))
+    boxes = detect(image_bgr)
+    if not boxes:
+        return None
+    largest = max(boxes, key=lambda b: b[2] * b[3])
+    return _measure_region_profile(image_bgr, largest)
+
+
 def _copy_external(source: Path, store: ProjectStore, content_hash: str) -> Path:
     suffix = source.suffix or ".img"
     managed_dir = _project_root(store) / "references"
@@ -137,6 +189,15 @@ def create_skin_reference(
             source_path = str(external_path)
             managed_path = str(managed)
             source_shot = None
+            image = cv2.imread(str(managed), cv2.IMREAD_COLOR)
+            if image is None:
+                raise ValueError("external reference image could not be read")
+            profile = _measure_external_profile(image, crop_geometry)
+            if profile is None:
+                raise ValueError(
+                    "external reference has no detectable face/skin; supply a reviewed "
+                    "crop_geometry or a different image"
+                )
         else:
             if frame_index is None:
                 raise ValueError("project-frame reference requires frame_index")
@@ -146,18 +207,19 @@ def create_skin_reference(
                 raise ValueError("project-frame reference shot must belong to the group's asset")
             if source_shot.group_id != group_id:
                 raise ValueError("project-frame reference shot must be inside the target group")
-            has_face = (
+            metric = (
                 session.query(SkinMetric)
                 .filter_by(shot_id=source_shot.id, subject_id=subject_id)
                 .first()
             )
-            if has_face is None:
+            if metric is None:
                 raise ValueError("project-frame reference must contain the target subject's face")
             content_hash = hashlib.sha256(
                 f"{asset.source_path}:{frame_index}:{source_shot_id}".encode()
             ).hexdigest()
             source_path = asset.source_path
             managed_path = None
+            profile = _bgr_mean_profile(metric.mean_b, metric.mean_g, metric.mean_r)
 
         ref = SkinAppearanceReference(
             subject_id=subject_id,
@@ -171,6 +233,7 @@ def create_skin_reference(
             source_shot_id=source_shot.id if source_shot else None,
             frame_index=frame_index,
             crop_geometry=crop_geometry or {},
+            profile=profile,
             state=REF_STATE_ACTIVE,
         )
         session.add(ref)
@@ -200,9 +263,19 @@ def request_skin_reference(
 
 
 def review_face_mask(
-    store: ProjectStore, mask_track_id: int, *, review_state: str, reason: str
+    store: ProjectStore,
+    mask_track_id: int,
+    *,
+    review_state: str,
+    reason: str,
+    author: str = "agent",
 ) -> FaceMaskTrack:
-    """Record a human/agent review state on a mask track (evidence gate only)."""
+    """Record a review state on a mask track (evidence gate only).
+
+    ``author="human"`` records an explicit human approval (required for the
+    lower-confidence fallback mask); ``author="agent"`` is evidence inspection
+    only.
+    """
     if review_state not in REVIEW_STATES:
         raise ValueError(f"review_state must be one of {REVIEW_STATES}")
     with store.session() as session:
@@ -213,9 +286,49 @@ def review_face_mask(
             raise ValueError("a non-valid mask track cannot be approved for proposals")
         mask.review_state = review_state
         mask.review_reason = reason
+        if author == "human":
+            mask.human_approved = True
         session.flush()
         session.refresh(mask)
         return mask
+
+
+def _resolve_reviewed_mask_for_track(session, face_track_id: int, subject_id: int) -> FaceMaskTrack:
+    """Resolve the reviewed FaceMaskTrack that belongs to a FaceTrack.
+
+    Never assumes ``FaceMaskTrack.id == FaceTrack.id``; the two tables have
+    independent primary-key sequences. Validates the linkage (same subject and
+    shot), quality bounds, and the proposal gate (reviewed + human-approved
+    fallback).
+    """
+    track = session.get(FaceTrack, face_track_id)
+    if track is None:
+        raise ValueError(f"face track {face_track_id} not found")
+    if track.state != "valid":
+        raise ValueError(f"face track {face_track_id} is not valid")
+    mask = (
+        session.query(FaceMaskTrack)
+        .filter_by(face_track_id=face_track_id)
+        .order_by(FaceMaskTrack.id.desc())
+        .first()
+    )
+    if mask is None:
+        raise ValueError(f"face track {face_track_id} has no face mask track")
+    if mask.shot_id != track.shot_id:
+        raise ValueError("face mask track belongs to a different shot")
+    if mask.subject_id != subject_id:
+        raise ValueError("face mask track belongs to a different subject")
+    if mask.state != "valid":
+        raise ValueError(f"face mask track {mask.id} is not valid ({mask.state})")
+    if mask.review_state != "approved_for_proposal":
+        raise ValueError(f"face mask track {mask.id} must be reviewed 'approved_for_proposal'")
+    if mask.backend == "fallback" and not mask.human_approved:
+        raise ValueError(f"face mask track {mask.id} is a fallback mask and requires human approval")
+    if mask.coverage < MIN_COVERAGE:
+        raise ValueError(f"face mask track {mask.id} coverage below threshold")
+    if mask.max_gap > MAX_GAP_RATIO:
+        raise ValueError(f"face mask track {mask.id} gap exceeds threshold")
+    return mask
 
 
 def suggest_skin_target(
@@ -232,13 +345,16 @@ def suggest_skin_target(
 ) -> SkinAppearanceTarget:
     """Draft a ``suggested`` skin target after the mask evidence is reviewed.
 
-    The target stores the reference's masked profile (measured or supplied) and
-    the draft preview parameters. It is never approved or applied here.
+    Resolves the reviewed mask track that belongs to ``face_track_id`` (never
+    assumes aligned primary keys), measures a real source profile, applies the
+    approved appearance parameters exactly once to produce the canonical target
+    profile, and persists both. A zero/neutral placeholder is never accepted.
     """
-    validate_skin_appearance_parameters(parameters)
+    params = validate_skin_appearance_parameters(parameters)
     with store.session() as session:
         _load_scope(session, subject_id, group_id)
-        validate_face_mask_track(store, face_track_id, require_review=True)
+        mask = _resolve_reviewed_mask_for_track(session, face_track_id, subject_id)
+
         ref = session.get(SkinAppearanceReference, reference_id) if reference_id else None
         if reference_id is not None and ref is None:
             raise ValueError(f"skin reference {reference_id} not found")
@@ -247,21 +363,31 @@ def suggest_skin_target(
                 raise ValueError("skin reference is not active")
             if ref.subject_id != subject_id or ref.group_id != group_id:
                 raise ValueError("skin reference is outside the subject/group scope")
+            source_profile = ref.profile
+        else:
+            source_profile = profile
 
-        if profile is None and ref is not None and ref.source_shot_id is not None:
-            metric = (
-                session.query(SkinMetric)
-                .filter_by(shot_id=ref.source_shot_id, subject_id=subject_id)
-                .first()
+        if source_profile is None:
+            track = session.get(FaceTrack, face_track_id)
+            metric = session.get(SkinMetric, track.skin_metric_id) if track else None
+            if metric is not None:
+                source_profile = _bgr_mean_profile(metric.mean_b, metric.mean_g, metric.mean_r)
+
+        if not source_profile or not source_profile.get("mean_ab"):
+            raise ValueError(
+                "a skin target requires a real measured source profile; no accurate "
+                "reference, external measurement, or supplied profile is available"
             )
-            profile = _bgr_mean_profile(metric.mean_b, metric.mean_g, metric.mean_r) if metric else None
-        profile = profile or {"mean_ab": [0.0, 0.0], "spread_ab": [0.0, 0.0]}
+
+        canonical = apply_profile_transform(source_profile, params)
 
         target = SkinAppearanceTarget(
             subject_id=subject_id,
             group_id=group_id,
             reference_id=reference_id,
-            profile=profile,
+            mask_track_id=mask.id,
+            profile=source_profile,
+            canonical_profile=canonical,
             approved_preview_parameters=dict(parameters),
             state=TARGET_SUGGESTED,
             rationale=rationale,
@@ -344,9 +470,10 @@ def match_skin_target_to_group(
 
         ref = session.get(SkinAppearanceReference, target.reference_id) if target.reference_id else None
         role = ref.role if ref else ROLE_ACCURATE
-        strength_cap = CREATIVE_STRENGTH_CAP if role == ROLE_CREATIVE else 1.0
-        base_strength = float(target.approved_preview_parameters.get("strength", 1.0))
-        strength = min(base_strength, strength_cap)
+        # Candidates move fully toward the canonical target for an accurate
+        # reference; a creative look direction is a softer, lower-confidence
+        # shift (capped at 0.50).
+        strength = CREATIVE_STRENGTH_CAP if role == ROLE_CREATIVE else 1.0
 
         member_ids = [
             s.id for s in session.query(Shot).filter_by(group_id=group_id).order_by(Shot.index).all()
@@ -358,7 +485,16 @@ def match_skin_target_to_group(
             .all()
         )
 
-        target_profile = target.profile or {"mean_ab": [0.0, 0.0], "spread_ab": [0.0, 0.0]}
+        # The canonical profile is the single authoritative appearance target
+        # (the source profile with the approved parameters applied once).
+        target_profile = target.canonical_profile or target.profile or {"mean_ab": [0.0, 0.0], "spread_ab": [0.0, 0.0]}
+
+        def _mask_ready(mask) -> bool:
+            if mask is None or mask.state != "valid" or mask.review_state != "approved_for_proposal":
+                return False
+            if mask.backend == "fallback" and not mask.human_approved:
+                return False
+            return True
 
         def candidate_for(m: SkinMetric) -> dict:
             track = _latest_valid_track(session, m.id)
@@ -366,7 +502,7 @@ def match_skin_target_to_group(
             candidate_profile = _bgr_mean_profile(m.mean_b, m.mean_g, m.mean_r)
             if track is None:
                 return {"shot_id": m.shot_id, "skin_metric_id": m.id, "state": "uncertain", "reason": "no valid face track"}
-            if mask is None or mask.review_state != "approved_for_proposal":
+            if not _mask_ready(mask):
                 return {"shot_id": m.shot_id, "skin_metric_id": m.id, "face_track_id": track.id, "state": "uncertain", "reason": "mask not reviewed for proposal"}
             params = derive_skin_appearance_parameters(candidate_profile, target_profile, strength=strength)
             parameters = {
@@ -446,9 +582,7 @@ def propose_skin_appearance_correction(
         if shot.group_id != target.group_id:
             raise ValueError("candidate shot is outside the target's exact group")
 
-        mask = _latest_reviewed_mask(session, face_track_id)
-        if mask is None or mask.review_state != "approved_for_proposal" or mask.state != "valid":
-            raise ValueError("mask track must be reviewed 'approved_for_proposal' and valid")
+        mask = _resolve_reviewed_mask_for_track(session, face_track_id, subject_id)
 
         correction = FaceCorrection(
             shot_id=shot_id,

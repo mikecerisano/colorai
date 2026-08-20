@@ -384,6 +384,11 @@ def validate_face_mask_track(
                 f"face mask track {mask_track_id} must be reviewed "
                 f"'approved_for_proposal' (currently {mask.review_state!r})"
             )
+        if require_review and mask.backend == "fallback" and not mask.human_approved:
+            raise ValueError(
+                f"face mask track {mask_track_id} is a lower-confidence fallback "
+                "mask and requires explicit human approval before use"
+            )
         return mask
 
 

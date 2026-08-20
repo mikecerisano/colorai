@@ -262,14 +262,18 @@ def test_skin_appearance_changes_cheek_but_not_eye_lip_or_second_face():
     assert np.array_equal(out[4, 4], image[4, 4])          # background
 
 
-def test_derive_zero_strength_yields_identity_parameters():
-    from colorai.skin_appearance import derive_skin_appearance_parameters
+def test_derive_zero_strength_applies_identity_at_compositor():
+    from colorai.skin_appearance import apply_profile_transform, derive_skin_appearance_parameters
 
     candidate = {"mean_ab": [0.03, 0.02], "spread_ab": [0.02, 0.02]}
     target = {"mean_ab": [0.0, 0.0], "spread_ab": [0.05, 0.05]}
+    # derive returns the full unscaled transform toward target…
     params = derive_skin_appearance_parameters(candidate, target, strength=0.0)
-    assert params.ab_offset == (0.0, 0.0)
-    assert params.ab_scale == (1.0, 1.0)
+    assert params.ab_offset[0] == pytest.approx(-0.03)
+    assert params.strength == 0.0
+    # …but strength 0 folds to identity at the profile/compositor layer.
+    canonical = apply_profile_transform(candidate, params)
+    assert canonical["mean_ab"] == pytest.approx([0.03, 0.02])
 
 
 # -- track builder -----------------------------------------------------------
