@@ -27,6 +27,10 @@ Dev extra: `pytest`, `pytest-cov`, `httpx` (FastAPI test client).
 
 Face extra: `mediapipe` — FaceMesh landmark sampling for precise skin tone.
 It is optional; without it, `face.py` falls back to YuNet bounding boxes.
+`face_masks.py` reuses the same optional MediaPipe Face Landmarker as a
+`LandmarkDetector` for reviewable temporal face-mask tracks; when it is absent
+the mask track is a clearly labelled `fallback` oval (no feature protection),
+never a silently substituted model.
 
 Agent extra: `mcp` — the MCP server (`colorai mcp`) for LLM/agent integration.
 Optional; the deterministic engine and CLI need nothing beyond the core deps.
