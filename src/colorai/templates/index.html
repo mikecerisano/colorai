@@ -256,6 +256,34 @@
             {% endfor %}
           </div>
           {% endfor %}
+
+          <!-- skin matching (face-local) -->
+          <h2>Skin matching</h2>
+          {% if not setup.skin_matching %}<p class="muted">No participants detected.</p>{% endif %}
+          {% for p in setup.skin_matching %}
+          <div class="ref-panel" style="margin-top:0.4rem">
+            <div class="row">
+              <span class="name">{{ p.name }}</span>
+              <span class="badge">{{ p.status }}</span>
+              <span class="muted">{{ p.shot_count }} shot(s)</span>
+            </div>
+            {% if p.status == 'qc_only' %}<p class="muted">No matching target. Inspect skin QC or add a manual finishing correction.</p>{% endif %}
+            {% for fc in p.proposals %}
+            <div class="corr-row {{ '' if fc.enabled else 'off' }}">
+              <span>{{ fc.classification }}</span>
+              <span class="muted">{{ fc.reason }} · conf {{ fc.confidence }}</span>
+              <span class="badge {{ fc.state }}">{{ fc.state }}{% if fc.enabled %} · enabled{% endif %}</span>
+              {% if fc.state == 'suggested' %}
+              <button type="button" onclick="faceAction({{ fc.id }}, 'approve')">Approve correction</button>
+              <button type="button" onclick="faceAction({{ fc.id }}, 'reject')">Reject</button>
+              <button type="button" onclick="faceAction({{ fc.id }}, 'mark-intentional')">Mark intentional</button>
+              {% elif fc.state == 'approved' and not fc.enabled %}
+              <button type="button" onclick="faceAction({{ fc.id }}, 'enable')">Enable</button>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+          {% endfor %}
         </div>
         {% endfor %}
       </section>
@@ -894,6 +922,10 @@
     // -- corrections / before-after ----------------------------------------
     async function toggleCorrection(id, enabled) {
       await request(`/api/corrections/${id}`, 'PATCH', {enabled});
+      reloadPreservingView();
+    }
+    async function faceAction(id, action) {
+      await request(`/api/face-corrections/${id}/${action}`, 'POST');
       reloadPreservingView();
     }
     function toggleCompare(shotId) {

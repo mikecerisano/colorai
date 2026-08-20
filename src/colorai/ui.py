@@ -216,6 +216,85 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
 
         active_by_group = {g.id: active_proposal_for(g.id) for g in groups}
 
+        # Skin-first matching summary per setup/variant (participants + local
+        # face corrections). Evidence only; approval/enable happen via API.
+        from colorai.project.models import FaceCorrection, FaceTrack
+
+        face_tracks = session.query(FaceTrack).filter(
+            FaceTrack.shot_id.in_([s.id for s in shots])
+        ).all()
+        latest_track_by_metric: dict[int, FaceTrack] = {}
+        for t in face_tracks:
+            cur = latest_track_by_metric.get(t.skin_metric_id)
+            if cur is None or t.id > cur.id:
+                latest_track_by_metric[t.skin_metric_id] = t
+
+        face_corrections = session.query(FaceCorrection).filter(
+            FaceCorrection.shot_id.in_([s.id for s in shots])
+        ).all()
+        fc_by_subject_shot: dict[tuple, list[FaceCorrection]] = {}
+        for fc in face_corrections:
+            fc_by_subject_shot.setdefault((fc.subject_id, fc.shot_id), []).append(fc)
+
+        approved_ref_by_scope: dict[tuple, int] = {}
+        for p in proposals:
+            if p.state == "approved" and p.subject_id is not None and p.group_id is not None:
+                approved_ref_by_scope[(p.subject_id, p.group_id)] = p.shot_id
+
+        def fc_brief(fc: FaceCorrection) -> dict:
+            return {
+                "id": fc.id,
+                "shot_id": fc.shot_id,
+                "subject_id": fc.subject_id,
+                "skin_metric_id": fc.skin_metric_id,
+                "face_track_id": fc.face_track_id,
+                "classification": fc.classification,
+                "reason": fc.reason,
+                "confidence": fc.confidence,
+                "gain": (fc.parameters or {}).get("gain"),
+                "state": fc.state,
+                "enabled": fc.enabled,
+            }
+
+        def skin_matching_for_group(g: ShotGroup) -> list[dict]:
+            member_group_set = set(member_group_ids[g.id])
+            out: list[dict] = []
+            for subj in subjects:
+                faces_in_group = [
+                    m for m in face_rows
+                    if m.subject_id == subj.id
+                    and group_id_by_shot.get(m.shot_id) in member_group_set
+                ]
+                if not faces_in_group:
+                    continue
+                ref_shot_id = approved_ref_by_scope.get((subj.id, g.id))
+                shot_count = len({m.shot_id for m in faces_in_group})
+                if shot_count < 2:
+                    status = "qc_only"
+                elif ref_shot_id is None:
+                    status = "needs_reference"
+                else:
+                    ref_metric = next((m for m in faces_in_group if m.shot_id == ref_shot_id), None)
+                    track = latest_track_by_metric.get(ref_metric.id) if ref_metric else None
+                    status = "reference_approved" if (track is not None and track.state == "valid") else "no_valid_track"
+                proposals_list: list[dict] = []
+                for m in faces_in_group:
+                    for fc in fc_by_subject_shot.get((subj.id, m.shot_id), []):
+                        proposals_list.append(fc_brief(fc))
+                out.append(
+                    {
+                        "subject_id": subj.id,
+                        "name": subj.name,
+                        "status": status,
+                        "reference_shot_id": ref_shot_id,
+                        "shot_count": shot_count,
+                        "proposals": proposals_list,
+                    }
+                )
+            return out
+
+        skin_matching_by_group = {g.id: skin_matching_for_group(g) for g in groups}
+
         # Organization suggestions: deterministic buckets over the
         # group-less, non-excused queue (excused = dismissed / intentional).
         org_queue = [s for s in shots if s.group_id is None and not s.excused]
@@ -396,6 +475,7 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                         for p in proposals_by_group.get(g.id, [])
                         if active_by_group[g.id] is None or p["id"] != active_by_group[g.id]["id"]
                     ],
+                    "skin_matching": skin_matching_by_group[g.id],
                 }
                 # Generic groups (including B-roll) are editorial bins, not
                 # interview setup workspaces or matching scopes.
@@ -956,6 +1036,39 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
         from colorai.planning import apply_organization_plan as _apply
 
         return _apply(store, plan_id)
+
+    # -- face correction review (human-only actions) ------------------------
+
+    @app.get("/api/assets/{asset_id}/skin-matching/{group_id}")
+    def skin_matching_endpoint(asset_id: int, group_id: int):
+        for s in _workspace(store, asset_id)["setups"]:
+            if s["id"] == group_id:
+                return s["skin_matching"]
+        return {"error": "group not found"}
+
+    @app.post("/api/face-corrections/{correction_id}/approve")
+    def approve_face_correction_endpoint(correction_id: int):
+        from colorai.face_corrections import approve_face_correction as _approve
+
+        return _approve(store, correction_id)
+
+    @app.post("/api/face-corrections/{correction_id}/reject")
+    def reject_face_correction_endpoint(correction_id: int):
+        from colorai.face_corrections import reject_face_correction as _reject
+
+        return _reject(store, correction_id)
+
+    @app.post("/api/face-corrections/{correction_id}/mark-intentional")
+    def mark_intentional_endpoint(correction_id: int):
+        from colorai.face_corrections import mark_face_correction_intentional as _mark
+
+        return _mark(store, correction_id)
+
+    @app.post("/api/face-corrections/{correction_id}/enable")
+    def enable_face_correction_endpoint(correction_id: int):
+        from colorai.face_corrections import enable_face_correction as _enable
+
+        return _enable(store, correction_id)
 
     # -- reference proposals ------------------------------------------------
 
