@@ -35,7 +35,7 @@ from colorai.shotdetect import (
     DEFAULT_THRESHOLD,
     detect_and_store_shots,
 )
-from colorai.skin_analysis import auto_assign_subjects
+from colorai.skin_analysis import auto_assign_subjects, backfill_missing_skin_metric_bboxes
 
 
 @dataclass(frozen=True)
@@ -229,6 +229,9 @@ def analyze_master(
         and existing.status == "analyzed"
         and existing.analyze_params == params
     ):
+        # Cached analysis, but legacy rows may still lack persisted face boxes;
+        # backfill is idempotent and bbox-only, so it is safe on every resume.
+        backfill_missing_skin_metric_bboxes(store, existing.id)
         return _load_analysis(store, existing)
 
     asset = existing if existing is not None else ingest_media(store, project_id, master_path)
@@ -245,6 +248,7 @@ def analyze_master(
 
     asset_stills = Path(stills_dir) / f"asset_{asset.id:04d}"
     frames, metrics, skin_metrics = _refresh(store, asset, shots, asset_stills)
+    backfill_missing_skin_metric_bboxes(store, asset.id)
 
     # Identity-based subject grouping on fresh analyses. Skipped when any face
     # already has a subject (a prior run or a manual/agent edit), so resumable

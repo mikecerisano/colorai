@@ -409,3 +409,72 @@ def skin_consistency(
                 )
             )
     return deviations
+
+
+def backfill_missing_skin_metric_bboxes(
+    store: ProjectStore,
+    asset_id: int,
+    detect=None,
+) -> dict:
+    """Backfill bbox_x/y/w/h for legacy ``SkinMetric`` rows missing boxes.
+
+    Bbox-only, idempotent, non-destructive: it never touches mean skin values,
+    subject assignments, face indices, or row identity. It re-runs the same
+    ``analyze_faces`` detection on each shot's existing representative still
+    and matches by the persisted ``face_index``. Indices that cannot be
+    recovered are reported and left ``NULL`` — never guessed.
+    """
+    import cv2
+    from pathlib import Path
+
+    from colorai.face import analyze_faces as _default_detect
+    from colorai.project.models import RepresentativeFrame, Shot, SkinMetric
+
+    detector = detect if detect is not None else _default_detect
+
+    with store.session() as session:
+        rows = (
+            session.query(SkinMetric)
+            .join(Shot, SkinMetric.shot_id == Shot.id)
+            .filter(Shot.asset_id == asset_id)
+            .order_by(Shot.index, SkinMetric.face_index)
+            .all()
+        )
+
+    scanned = 0
+    backfilled: list[int] = []
+    unresolved: list[dict] = []
+    for m in rows:
+        if None not in (m.bbox_x, m.bbox_y, m.bbox_w, m.bbox_h):
+            continue
+        scanned += 1
+        with store.session() as session:
+            rf = session.query(RepresentativeFrame).filter_by(shot_id=m.shot_id).first()
+            image_path = rf.image_path if rf else None
+        if not image_path or not Path(image_path).exists():
+            unresolved.append({"skin_metric_id": m.id, "reason": "no representative frame"})
+            continue
+        image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+        if image is None:
+            unresolved.append({"skin_metric_id": m.id, "reason": "cannot read representative frame"})
+            continue
+        faces = detector(image)
+        if m.face_index < 0 or m.face_index >= len(faces):
+            unresolved.append(
+                {"skin_metric_id": m.id, "reason": f"face index {m.face_index} not detected"}
+            )
+            continue
+        x, y, w, h = faces[m.face_index]["bbox"]
+        if not (w > 0 and h > 0):
+            unresolved.append(
+                {"skin_metric_id": m.id, "reason": "detected face has non-positive size"}
+            )
+            continue
+        with store.session() as session:
+            session.query(SkinMetric).filter_by(id=m.id).update(
+                {"bbox_x": x, "bbox_y": y, "bbox_w": w, "bbox_h": h},
+                synchronize_session=False,
+            )
+        backfilled.append(m.id)
+
+    return {"scanned": scanned, "backfilled": backfilled, "unresolved": unresolved}

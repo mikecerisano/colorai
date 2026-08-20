@@ -76,6 +76,7 @@ def test_mcp_surface_excludes_human_face_actions():
     names = {t.name for t in asyncio.run(mcp_server.mcp.list_tools())}
     assert "skin_matching_workspace" in names
     assert "build_face_track" in names
+    assert "backfill_skin_metric_bboxes" in names
     assert "get_face_track_contact_sheet" in names
     assert "skin_first_match_subject_setup" in names
     assert "propose_face_correction" in names
@@ -203,3 +204,12 @@ def test_update_rejects_non_skin_mismatch_classification(tmp_path):
     )
     out = mcp_server.update_face_correction(db, created["id"], classification="intentional_lighting")
     assert "skin_mismatch" in out.get("error", "")
+
+
+def test_backfill_skin_metric_bboxes_mcp(tmp_path):
+    db, asset, shots, alice, group, metrics = _store(tmp_path, n_shots=1)
+    # These metrics already carry boxes, so the bbox-only backfill is a no-op.
+    out = mcp_server.backfill_skin_metric_bboxes(db, asset.id)
+    assert out["scanned"] == 0
+    assert out["backfilled"] == []
+    assert out["unresolved"] == []

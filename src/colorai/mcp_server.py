@@ -1235,6 +1235,25 @@ def build_face_track(project: str, skin_metric_id: int, samples: int = 16) -> di
 
 
 @mcp.tool()
+def backfill_skin_metric_bboxes(project: str, asset_id: int) -> dict:
+    """Backfill missing face boxes on legacy skin metrics (bbox-only, idempotent).
+
+    Re-runs face detection on each shot's representative still and fills only
+    ``bbox_x/y/w/h`` for rows that still lack them, matching by the persisted
+    ``face_index``. Never touches skin means, subject assignment, or row
+    identity, and never guesses an unrecoverable face index.
+    """
+    from colorai.skin_analysis import backfill_missing_skin_metric_bboxes as _backfill
+
+    result = _backfill(_open(project), asset_id)
+    return {
+        "scanned": result["scanned"],
+        "backfilled": result["backfilled"],
+        "unresolved": result["unresolved"],
+    }
+
+
+@mcp.tool()
 def get_face_track_contact_sheet(project: str, face_track_id: int) -> Image:
     """Return labelled tracked samples with face boxes for visual inspection."""
     import io
