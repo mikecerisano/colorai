@@ -85,14 +85,27 @@ def test_group_crud_and_assignment():
 def test_delete_group_removes_its_reference_proposals():
     store = ProjectStore.create(":memory:")
     asset, shots = _asset_with_shots(store)
+    from colorai.project import ReferenceProposal, SkinMetric
+    from colorai.skin_analysis import create_subject
+
+    subject = create_subject(store, asset.id, "Alice")
     group = create_group(store, asset.id, "interview", kind="setup")
     assign_shot_group(store, shots[0].id, group.id)
-    from colorai.project import ReferenceProposal
+    with store.session() as session:
+        session.add(
+            SkinMetric(
+                shot_id=shots[0].id, face_index=0,
+                mean_b=0.3, mean_g=0.3, mean_r=0.5, sample_pixels=10,
+                subject_id=subject.id,
+            )
+        )
+        session.commit()
+
     from colorai.references import propose_reference
 
     proposal = propose_reference(
         store, asset_id=asset.id, shot_id=shots[0].id, reason="stale", confidence=0.8,
-        group_id=group.id,
+        group_id=group.id, subject_id=subject.id,
     )
     delete_group(store, group.id)
 

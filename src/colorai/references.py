@@ -14,11 +14,13 @@ a grade.
 
 from __future__ import annotations
 
+from colorai.editorial import GROUP_KIND_SETUP, GROUP_KIND_VARIANT
 from colorai.project.models import (
     MediaAsset,
     ReferenceProposal,
     Shot,
     ShotGroup,
+    SkinMetric,
     Subject,
 )
 from colorai.project.store import ProjectStore
@@ -64,8 +66,34 @@ def propose_reference(
     _validate_scope(store, asset_id, subject_id, group_id)
 
     with store.session() as session:
-        if session.get(Shot, shot_id) is None:
+        shot = session.get(Shot, shot_id)
+        if shot is None or shot.asset_id != asset_id:
             raise ValueError(f"shot {shot_id} not found")
+
+        # Group-scoped references are validated up front (never "survive until
+        # matching"): they must name the exact participant and point at a shot
+        # inside that setup/variant that contains that participant's face.
+        if group_id is not None:
+            group = session.get(ShotGroup, group_id)
+            if group.kind not in (GROUP_KIND_SETUP, GROUP_KIND_VARIANT):
+                raise ValueError(
+                    "group-scoped reference requires a setup or lighting-variant group"
+                )
+            if subject_id is None:
+                raise ValueError(
+                    "group-scoped reference must identify a participant (subject_id)"
+                )
+            if shot.group_id != group_id:
+                raise ValueError("shot is not inside the group scope")
+            has_face = (
+                session.query(SkinMetric)
+                .filter_by(shot_id=shot_id, subject_id=subject_id)
+                .first()
+                is not None
+            )
+            if not has_face:
+                raise ValueError("shot does not contain the participant's face")
+
         proposal = ReferenceProposal(
             asset_id=asset_id,
             subject_id=subject_id,

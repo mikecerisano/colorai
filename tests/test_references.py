@@ -97,10 +97,21 @@ def test_effective_reference_falls_back_to_subject_hero():
 
 
 def test_approved_proposal_wins_for_group_scope():
-    from colorai.editorial import create_group
+    from colorai.editorial import assign_shot_group, create_group
+    from colorai.project import SkinMetric
 
     store, asset, shots, subject = _setup()
     group = create_group(store, asset.id, "interview A", kind="setup", camera="A")
+    assign_shot_group(store, shots[0].id, group.id)
+    with store.session() as session:
+        session.add(
+            SkinMetric(
+                shot_id=shots[0].id, face_index=0,
+                mean_b=0.3, mean_g=0.3, mean_r=0.5, sample_pixels=10,
+                subject_id=subject.id,
+            )
+        )
+        session.commit()
     propose_reference(
         store, asset_id=asset.id, shot_id=shots[0].id, reason="scope ref", confidence=0.6,
         subject_id=subject.id, group_id=group.id,

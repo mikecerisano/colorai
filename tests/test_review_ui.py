@@ -59,6 +59,14 @@ def _client(tmp_path):
                 bbox_x=32, bbox_y=14, bbox_w=18, bbox_h=22,
             )
         )
+        session.add(
+            SkinMetric(
+                shot_id=shots[1].id, face_index=0,
+                mean_b=0.30, mean_g=0.30, mean_r=0.50,
+                sample_pixels=100, subject_id=alice.id,
+                bbox_x=8, bbox_y=10, bbox_w=16, bbox_h=20,
+            )
+        )
         session.commit()
 
     client = TestClient(create_app(store, stills))
@@ -160,7 +168,7 @@ def test_multi_face_bbox_data_present(tmp_path):
     ws = client.get(f"/api/assets/{asset.id}/workspace").json()
 
     all_faces = [f for s in ws["subjects"] for f in s["faces"]]
-    assert len(all_faces) == 2
+    assert len(all_faces) == 3
     boxes = [tuple(f["bbox"]) for f in all_faces]
     assert boxes[0] != boxes[1]  # distinct boxes for distinct faces
     assert all(all(v is not None for v in b) for b in boxes)
@@ -195,7 +203,7 @@ def test_reference_approval_reflected_in_setup_badge(tmp_path):
     client.put(f"/api/shots/{shots[0].id}/group", json={"group_id": g["id"]})
     proposal = client.post(
         f"/api/assets/{asset.id}/reference-proposals",
-        json={"shot_id": shots[0].id, "reason": "hero", "confidence": 0.9, "group_id": g["id"]},
+        json={"shot_id": shots[0].id, "reason": "hero", "confidence": 0.9, "group_id": g["id"], "subject_id": alice.id},
     ).json()
 
     ws = client.get(f"/api/assets/{asset.id}/workspace").json()
@@ -329,13 +337,13 @@ def test_active_proposal_skips_rejected_and_uses_newest_suggested(tmp_path):
 
     first = client.post(
         f"/api/assets/{asset.id}/reference-proposals",
-        json={"shot_id": shots[0].id, "reason": "first", "confidence": 0.5, "group_id": setup["id"]},
+        json={"shot_id": shots[0].id, "reason": "first", "confidence": 0.5, "group_id": setup["id"], "subject_id": alice.id},
     ).json()
     client.post(f"/api/reference-proposals/{first['id']}/reject")
 
     second = client.post(
         f"/api/assets/{asset.id}/reference-proposals",
-        json={"shot_id": shots[1].id, "reason": "second", "confidence": 0.8, "group_id": setup["id"]},
+        json={"shot_id": shots[1].id, "reason": "second", "confidence": 0.8, "group_id": setup["id"], "subject_id": alice.id},
     ).json()
 
     ws = client.get(f"/api/assets/{asset.id}/workspace").json()
@@ -363,13 +371,13 @@ def test_active_proposal_prefers_approved_over_newer_suggested(tmp_path):
 
     first = client.post(
         f"/api/assets/{asset.id}/reference-proposals",
-        json={"shot_id": shots[0].id, "reason": "approved hero", "confidence": 0.9, "group_id": setup["id"]},
+        json={"shot_id": shots[0].id, "reason": "approved hero", "confidence": 0.9, "group_id": setup["id"], "subject_id": alice.id},
     ).json()
     client.post(f"/api/reference-proposals/{first['id']}/approve")
 
     newer = client.post(
         f"/api/assets/{asset.id}/reference-proposals",
-        json={"shot_id": shots[1].id, "reason": "newer suggestion", "confidence": 0.7, "group_id": setup["id"]},
+        json={"shot_id": shots[1].id, "reason": "newer suggestion", "confidence": 0.7, "group_id": setup["id"], "subject_id": alice.id},
     ).json()
 
     ws = client.get(f"/api/assets/{asset.id}/workspace").json()
@@ -393,7 +401,7 @@ def test_index_renders_with_variant_and_reference(tmp_path):
     client.put(f"/api/shots/{shots[1].id}/group", json={"group_id": variant["id"]})
     client.post(
         f"/api/assets/{asset.id}/reference-proposals",
-        json={"shot_id": shots[0].id, "reason": "hero", "confidence": 0.9, "group_id": setup["id"]},
+        json={"shot_id": shots[0].id, "reason": "hero", "confidence": 0.9, "group_id": setup["id"], "subject_id": alice.id},
     )
 
     r = client.get("/")

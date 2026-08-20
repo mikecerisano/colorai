@@ -222,7 +222,7 @@ def test_reference_scope_violation_is_blocking(tmp_path):
 
     ref = propose_reference(
         store, asset_id=asset.id, shot_id=shots[0].id, reason="hero",
-        confidence=0.9, group_id=existing.id,
+        confidence=0.9, group_id=existing.id, subject_id=alice.id,
     )
     approve_reference(store, ref.id)
 

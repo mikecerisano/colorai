@@ -27,7 +27,9 @@ mcp = FastMCP(
     instructions=(
         "ColorAI deterministic finishing/QC engine. Read measurements, then "
         "refine grouping and corrections with clear reasoning in notes. "
-        "Never modify source media; all edits go through these tools."
+        "Never modify source media; all edits go through these tools. "
+        "Agents may draft and revise organization plans, but must NOT approve "
+        "or apply a plan — those are human-only decisions."
     ),
 )
 
@@ -883,6 +885,241 @@ def matching_workspace(project: str, asset_id: int) -> dict:
                 for p in proposals
             ],
         }
+
+
+# ---------------------------------------------------------------------------
+# Organization planning (draft / validate / approve / apply)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def organization_workspace(project: str, asset_id: int) -> dict:
+    """Structured read for drafting an organization plan.
+
+    Returns current groups, ungrouped/intentional/B-roll states, subjects,
+    per-shot face assignments, existing approved references, and the active
+    draft plus its validation summary (if any). Read-only.
+    """
+    from colorai.planning import (
+        find_broll_group,
+        list_organization_plans,
+        validate_organization_plan,
+    )
+    from colorai.project.models import (
+        MediaAsset,
+        ReferenceProposal,
+        Shot,
+        ShotGroup,
+        SkinMetric,
+        Subject,
+    )
+
+    store = _open(project)
+    with store.session() as session:
+        if session.get(MediaAsset, asset_id) is None:
+            return {"error": "asset not found"}
+        subjects = session.query(Subject).filter_by(asset_id=asset_id).order_by(Subject.id).all()
+        groups = session.query(ShotGroup).filter_by(asset_id=asset_id).order_by(ShotGroup.id).all()
+        shots = session.query(Shot).filter_by(asset_id=asset_id).order_by(Shot.index).all()
+        refs = session.query(ReferenceProposal).filter_by(asset_id=asset_id, state="approved").all()
+        faces = (
+            session.query(SkinMetric)
+            .filter(SkinMetric.shot_id.in_([s.id for s in shots]))
+            .order_by(SkinMetric.shot_id, SkinMetric.face_index)
+            .all()
+        )
+
+        shot_faces: dict[int, list[dict]] = {}
+        for m in faces:
+            shot_faces.setdefault(m.shot_id, []).append(
+                {"skin_metric_id": m.id, "subject_id": m.subject_id, "face_index": m.face_index}
+            )
+
+        broll = find_broll_group(session, asset_id)
+        result = {
+            "asset_id": asset_id,
+            "subjects": [
+                {"id": s.id, "name": s.name, "reference_shot_id": s.reference_shot_id}
+                for s in subjects
+            ],
+            "groups": [
+                {
+                    "id": g.id,
+                    "name": g.name,
+                    "kind": g.kind,
+                    "camera": g.camera,
+                    "parent_id": g.parent_id,
+                    "member_shot_ids": [s.id for s in shots if s.group_id == g.id],
+                }
+                for g in groups
+            ],
+            "ungrouped_shots": [
+                {
+                    "id": s.id,
+                    "index": s.index,
+                    "start_tc": s.start_timecode,
+                    "end_tc": s.end_timecode,
+                    "excused": s.excused,
+                    "faces": shot_faces.get(s.id, []),
+                }
+                for s in shots if s.group_id is None
+            ],
+            "broll_group_id": broll.id if broll else None,
+            "intentional_exception_shot_ids": [
+                s.id for s in shots if s.group_id is None and s.excused
+            ],
+            "shot_faces": shot_faces,
+            "references": [
+                {"id": r.id, "subject_id": r.subject_id, "group_id": r.group_id, "shot_id": r.shot_id}
+                for r in refs
+            ],
+        }
+
+    plans = list_organization_plans(store, asset_id)
+    active = next((p for p in plans if p["state"] in ("draft", "approved")), None)
+    result["active_draft"] = active
+    if active:
+        result["validation_summary"] = validate_organization_plan(store, active["id"])
+    return result
+
+
+@mcp.tool()
+def get_shot_contact_sheet(project: str, shot_ids: list[int], columns: int = 5) -> Image:
+    """Return a labelled contact sheet of representative frames for visual comparison."""
+    import io
+
+    from PIL import Image as PILImage
+    from PIL import ImageDraw, ImageFont
+
+    from colorai.project.models import RepresentativeFrame, Shot
+
+    store = _open(project)
+    thumb = 256
+    label_h = 22
+    rows = (len(shot_ids) + columns - 1) // columns
+    sheet = PILImage.new("RGB", (columns * thumb, rows * (thumb + label_h)), (24, 24, 24))
+    draw = ImageDraw.Draw(sheet)
+    try:
+        font = ImageFont.load_default()
+    except Exception:
+        font = None
+
+    with store.session() as session:
+        for i, sid in enumerate(shot_ids):
+            shot = session.get(Shot, sid)
+            rf = session.query(RepresentativeFrame).filter_by(shot_id=sid).first()
+            x = (i % columns) * thumb
+            y = (i // columns) * (thumb + label_h)
+            if rf and rf.image_path:
+                try:
+                    img = PILImage.open(rf.image_path).convert("RGB")
+                    img.thumbnail((thumb, thumb))
+                    sheet.paste(img, (x, y))
+                except Exception:
+                    pass
+            label = f"shot {shot.index if shot else sid} · {shot.start_timecode if shot else ''}"
+            if font:
+                draw.text((x + 4, y + thumb + 4), label, fill=(255, 255, 255), font=font)
+
+    buf = io.BytesIO()
+    sheet.save(buf, format="PNG")
+    return Image(data=buf.getvalue(), format="png")
+
+
+@mcp.tool()
+def create_organization_plan(
+    project: str, asset_id: int, groups: list[dict], items: list[dict],
+    summary: str = "", author: str = "agent",
+) -> dict:
+    """Store a draft organization plan (structurally validated; never changes the asset)."""
+    from colorai.planning import create_organization_plan as _create
+
+    try:
+        plan = _create(_open(project), asset_id, groups, items, summary=summary, author=author)
+        return {"id": plan.id, "state": plan.state, "asset_id": plan.asset_id}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def get_organization_plan(project: str, plan_id: int) -> dict:
+    from colorai.planning import get_organization_plan as _get
+
+    return _get(_open(project), plan_id) or {"error": "plan not found"}
+
+
+@mcp.tool()
+def list_organization_plans(project: str, asset_id: int) -> list[dict]:
+    from colorai.planning import list_organization_plans as _list
+
+    return _list(_open(project), asset_id)
+
+
+@mcp.tool()
+def update_organization_plan_item(
+    project: str,
+    plan_id: int,
+    shot_id: int,
+    decision: str | None = None,
+    destination_type: str | None = None,
+    target_group_id: int | None = None,
+    target_draft_key: str | None = None,
+    human_override_reason: str | None = None,
+) -> dict:
+    from colorai.planning import update_organization_plan_item as _update
+
+    try:
+        return _update(
+            _open(project), plan_id, shot_id,
+            decision=decision, destination_type=destination_type,
+            target_group_id=target_group_id, target_draft_key=target_draft_key,
+            human_override_reason=human_override_reason,
+        ) or {"error": "not found"}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def update_organization_plan_group(
+    project: str,
+    plan_id: int,
+    draft_key: str,
+    name: str | None = None,
+    camera: str | None = None,
+    kind: str | None = None,
+    parent_draft_key: str | None = None,
+) -> dict:
+    from colorai.planning import update_organization_plan_group as _update
+
+    try:
+        return _update(
+            _open(project), plan_id, draft_key,
+            name=name, camera=camera, kind=kind, parent_draft_key=parent_draft_key,
+        ) or {"error": "not found"}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def validate_organization_plan(project: str, plan_id: int) -> dict:
+    from colorai.planning import validate_organization_plan as _validate
+
+    return _validate(_open(project), plan_id)
+
+
+@mcp.tool()
+def approve_organization_plan(project: str, plan_id: int, approved_by: str = "human") -> dict:
+    """Human-only: approve a draft (does not apply it)."""
+    from colorai.planning import approve_organization_plan as _approve
+
+    return _approve(_open(project), plan_id, approved_by=approved_by)
+
+
+@mcp.tool()
+def apply_organization_plan(project: str, plan_id: int) -> dict:
+    """Human-only: atomically apply an approved plan (re-validates in the transaction)."""
+    from colorai.planning import apply_organization_plan as _apply
+
+    return _apply(_open(project), plan_id)
 
 
 @mcp.tool()
