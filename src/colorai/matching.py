@@ -280,3 +280,114 @@ def cross_variant_skin_consistency(
             )
         )
     return deviations, None
+
+
+# ---------------------------------------------------------------------------
+# Skin-first multicamera matching (face-local, conservative)
+# ---------------------------------------------------------------------------
+
+from colorai.face_corrections import GAIN_MAX, GAIN_MIN  # noqa: E402
+
+SKIN_DEADBAND = 0.01
+
+
+def _clip_gain(gain: tuple[float, float, float]) -> tuple[float, float, float]:
+    return tuple(max(GAIN_MIN, min(GAIN_MAX, float(g))) for g in gain)
+
+
+def candidate_skin_gain(
+    ref_bgr: tuple[float, float, float], cand_bgr: tuple[float, float, float]
+) -> tuple[float, float, float] | None:
+    """Per-channel linear gain to move candidate skin toward the reference.
+
+    Returns ``None`` when the difference is within the deadband (already
+    matching) or the candidate channel is degenerate.
+    """
+    gains: list[float] = []
+    for r, c in zip(ref_bgr, cand_bgr):
+        if c <= 1e-6:
+            return None
+        gains.append(float(r) / float(c))
+    if max(abs(g - 1.0) for g in gains) <= SKIN_DEADBAND:
+        return None
+    return _clip_gain(gains)
+
+
+def skin_first_match_subject_setup(
+    store: ProjectStore, asset_id: int, subject_id: int, group_id: int
+) -> tuple[dict, str | None]:
+    """Return deterministic face-local skin evidence for a scope (never persists).
+
+    This is the *skin-first* path: only the chosen participant's measured face
+    region can produce a candidate. Whole-frame camera-angle differences are
+    never turned into a correction here.
+    """
+    from colorai.project.models import FaceTrack, Shot, ShotGroup, SkinMetric
+
+    ref_shot_id = approved_reference_for_scope(
+        store, asset_id=asset_id, subject_id=subject_id, group_id=group_id
+    )
+    if ref_shot_id is None:
+        return {"error": "no approved reference for this subject/setup scope", "status": "no_reference"}, None
+
+    with store.session() as session:
+        group = session.get(ShotGroup, group_id)
+        if group is None or group.asset_id != asset_id:
+            return {"error": "group not found for this asset"}, None
+        member_ids = [
+            s.id for s in session.query(Shot).filter_by(group_id=group_id).order_by(Shot.index).all()
+        ]
+        face_metrics = (
+            session.query(SkinMetric)
+            .filter(SkinMetric.subject_id == subject_id, SkinMetric.shot_id.in_(member_ids))
+            .order_by(SkinMetric.shot_id, SkinMetric.face_index)
+            .all()
+        )
+        if len(face_metrics) < 2:
+            return {
+                "status": "qc_only",
+                "reference_shot_id": ref_shot_id,
+                "reason": "one-shot participant has no matching target",
+                "candidates": [],
+            }, None
+
+        tracks_by_metric = {
+            m.id: session.query(FaceTrack)
+            .filter_by(skin_metric_id=m.id, state="valid")
+            .order_by(FaceTrack.id.desc())
+            .first()
+            for m in face_metrics
+        }
+        ref_metric = next((m for m in face_metrics if m.shot_id == ref_shot_id), None)
+        if ref_metric is None or tracks_by_metric.get(ref_metric.id) is None:
+            return {"error": "reference has no valid face track", "status": "no_reference", "candidates": []}, None
+
+        ref_bgr = (ref_metric.mean_b, ref_metric.mean_g, ref_metric.mean_r)
+        candidates: list[dict] = []
+        for m in face_metrics:
+            if m.shot_id == ref_shot_id:
+                continue
+            track = tracks_by_metric.get(m.id)
+            cand_bgr = (m.mean_b, m.mean_g, m.mean_r)
+            gain = candidate_skin_gain(ref_bgr, cand_bgr) if track is not None else None
+            candidates.append(
+                {
+                    "shot_id": m.shot_id,
+                    "skin_metric_id": m.id,
+                    "face_track_id": track.id if track else None,
+                    "track_state": "valid" if track else "none",
+                    "reference_median_bgr": list(ref_bgr),
+                    "candidate_median_bgr": list(cand_bgr),
+                    "gain": list(gain) if gain else None,
+                    "coverage": track.coverage if track else None,
+                    "stability": track.skin_stability if track else None,
+                }
+            )
+
+        return {
+            "status": "ok",
+            "reference_shot_id": ref_shot_id,
+            "subject_id": subject_id,
+            "group_id": group_id,
+            "candidates": candidates,
+        }, None

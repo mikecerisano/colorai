@@ -1106,6 +1106,264 @@ def validate_organization_plan(project: str, plan_id: int) -> dict:
     return _validate(_open(project), plan_id)
 
 
+# ---------------------------------------------------------------------------
+# Skin-first multicamera matching (draft-only agent surface)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def skin_matching_workspace(
+    project: str, asset_id: int, subject_id: int, group_id: int
+) -> dict:
+    """Structured read for skin-first matching: reference, member shots, face
+    boxes/crops, stored tracks, temporal skin summaries, and local proposals."""
+    from colorai.project.models import (
+        FaceCorrection,
+        FaceTrack,
+        ReferenceProposal,
+        Shot,
+        ShotGroup,
+        SkinMetric,
+    )
+    from colorai.references import approved_reference_for_scope
+
+    store = _open(project)
+    ref_shot_id = approved_reference_for_scope(
+        store, asset_id=asset_id, subject_id=subject_id, group_id=group_id
+    )
+    with store.session() as session:
+        group = session.get(ShotGroup, group_id)
+        if group is None or group.asset_id != asset_id:
+            return {"error": "group not found for this asset"}
+        member_ids = [
+            s.id for s in session.query(Shot).filter_by(group_id=group_id).order_by(Shot.index).all()
+        ]
+        faces = (
+            session.query(SkinMetric)
+            .filter(SkinMetric.subject_id == subject_id, SkinMetric.shot_id.in_(member_ids))
+            .order_by(SkinMetric.shot_id, SkinMetric.face_index)
+            .all()
+        )
+        tracks = {
+            f.id: session.query(FaceTrack)
+            .filter_by(skin_metric_id=f.id)
+            .order_by(FaceTrack.id.desc())
+            .first()
+            for f in faces
+        }
+        proposals = (
+            session.query(FaceCorrection)
+            .filter(FaceCorrection.subject_id == subject_id, FaceCorrection.shot_id.in_(member_ids))
+            .order_by(FaceCorrection.id)
+            .all()
+        )
+        return {
+            "asset_id": asset_id,
+            "subject_id": subject_id,
+            "group_id": group_id,
+            "reference_shot_id": ref_shot_id,
+            "member_shots": [
+                {"id": s.id, "index": s.index, "start_tc": s.start_timecode, "end_tc": s.end_timecode}
+                for s in session.query(Shot).filter(Shot.id.in_(member_ids)).order_by(Shot.index).all()
+            ],
+            "faces": [
+                {
+                    "skin_metric_id": f.id,
+                    "shot_id": f.shot_id,
+                    "face_index": f.face_index,
+                    "mean_bgr": [round(f.mean_b, 4), round(f.mean_g, 4), round(f.mean_r, 4)],
+                    "bbox": [f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h],
+                    "track": _track_brief(tracks.get(f.id)),
+                }
+                for f in faces
+            ],
+            "proposals": [_fc_brief(p) for p in proposals],
+        }
+
+
+def _track_brief(t) -> dict | None:
+    if t is None:
+        return None
+    return {
+        "id": t.id,
+        "state": t.state,
+        "coverage": t.coverage,
+        "max_gap": t.max_gap,
+        "skin_stability": t.skin_stability,
+        "median_bgr": t.median_bgr,
+        "tracked_count": t.tracked_count,
+        "sample_count": t.sample_count,
+        "failure_reason": t.failure_reason,
+    }
+
+
+def _fc_brief(c) -> dict:
+    return {
+        "id": c.id,
+        "shot_id": c.shot_id,
+        "subject_id": c.subject_id,
+        "skin_metric_id": c.skin_metric_id,
+        "face_track_id": c.face_track_id,
+        "reference_shot_id": c.reference_shot_id,
+        "reference_group_id": c.reference_group_id,
+        "classification": c.classification,
+        "reason": c.reason,
+        "confidence": c.confidence,
+        "parameters": c.parameters,
+        "state": c.state,
+        "enabled": c.enabled,
+    }
+
+
+@mcp.tool()
+def build_face_track(project: str, skin_metric_id: int, samples: int = 16) -> dict:
+    """Derive and persist a temporal face track (does not enable any grade)."""
+    from colorai.face_corrections import build_face_track as _build
+
+    try:
+        t = _build(_open(project), skin_metric_id, samples=samples)
+        return {
+            "id": t.id,
+            "state": t.state,
+            "coverage": t.coverage,
+            "max_gap": t.max_gap,
+            "skin_stability": t.skin_stability,
+            "tracked_count": t.tracked_count,
+            "failure_reason": t.failure_reason,
+        }
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def get_face_track_contact_sheet(project: str, face_track_id: int) -> Image:
+    """Return labelled tracked samples with face boxes for visual inspection."""
+    import io
+
+    from PIL import Image as PILImage
+    from PIL import ImageDraw
+
+    from colorai.frames import extract_frame
+    from colorai.project.models import FaceTrack, MediaAsset, Shot
+
+    store = _open(project)
+    with store.session() as session:
+        track = session.get(FaceTrack, face_track_id)
+        if track is None:
+            raise ValueError("face track not found")
+        shot = session.get(Shot, track.shot_id)
+        asset = session.get(MediaAsset, shot.asset_id)
+        keyframes = list(track.keyframes or [])[:8]
+
+    import tempfile
+
+    probe_dir = Path(tempfile.mkdtemp(prefix="colorai_track_sheet_"))
+    try:
+        thumbs = []
+        for fi, nx, ny, nw, nh in keyframes:
+            still = extract_frame(asset.source_path, fi, probe_dir / f"{fi}.png", fps=asset.frame_rate, scale=320)
+            img = PILImage.open(still).convert("RGB")
+            draw = ImageDraw.Draw(img)
+            w, h = img.size
+            box = (nx * w, ny * h, (nx + nw) * w, (ny + nh) * h)
+            draw.rectangle(box, outline=(255, 255, 0), width=2)
+            thumbs.append(img)
+        cols = min(4, len(thumbs))
+        rows = (len(thumbs) + cols - 1) // cols if cols else 0
+        tw, th = (thumbs[0].size if thumbs else (320, 180))
+        sheet = PILImage.new("RGB", (cols * tw, rows * th), (24, 24, 24))
+        for i, img in enumerate(thumbs):
+            sheet.paste(img, ((i % cols) * tw, (i // cols) * th))
+        buf = io.BytesIO()
+        sheet.save(buf, format="PNG")
+        return Image(data=buf.getvalue(), format="png")
+    finally:
+        import shutil
+
+        shutil.rmtree(probe_dir, ignore_errors=True)
+
+
+@mcp.tool()
+def skin_first_match_subject_setup(
+    project: str, asset_id: int, subject_id: int, group_id: int
+) -> dict:
+    """Deterministic face-local skin evidence only (never persists a correction)."""
+    from colorai.matching import skin_first_match_subject_setup as _match
+
+    result, error = _match(_open(project), asset_id, subject_id, group_id)
+    return {"error": error, **result} if error else result
+
+
+@mcp.tool()
+def propose_face_correction(
+    project: str,
+    shot_id: int,
+    subject_id: int,
+    skin_metric_id: int | None,
+    face_track_id: int,
+    reference_shot_id: int | None,
+    reference_group_id: int | None,
+    reason: str,
+    confidence: float,
+    classification: str,
+    gain: list[float],
+) -> dict:
+    """Draft a suggested, disabled face correction (only ``skin_mismatch``)."""
+    from colorai.face_corrections import propose_face_correction as _propose
+
+    try:
+        c = _propose(
+            _open(project),
+            shot_id=shot_id,
+            subject_id=subject_id,
+            skin_metric_id=skin_metric_id,
+            face_track_id=face_track_id,
+            reference_shot_id=reference_shot_id,
+            reference_group_id=reference_group_id,
+            reason=reason,
+            confidence=confidence,
+            classification=classification,
+            gain=tuple(gain),
+        )
+        return {"id": c.id, "state": c.state, "enabled": c.enabled}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+@mcp.tool()
+def list_face_corrections(project: str, shot_id: int | None = None) -> list[dict]:
+    from colorai.face_corrections import list_face_corrections as _list
+
+    return _list(_open(project), shot_id=shot_id)
+
+
+@mcp.tool()
+def get_face_correction(project: str, correction_id: int) -> dict:
+    from colorai.face_corrections import get_face_correction as _get
+
+    return _get(_open(project), correction_id) or {"error": "not found"}
+
+
+@mcp.tool()
+def update_face_correction(
+    project: str,
+    correction_id: int,
+    reason: str | None = None,
+    confidence: float | None = None,
+    classification: str | None = None,
+    gain: list[float] | None = None,
+) -> dict:
+    from colorai.face_corrections import update_face_correction as _update
+
+    try:
+        return _update(
+            _open(project), correction_id,
+            reason=reason, confidence=confidence, classification=classification,
+            gain=tuple(gain) if gain else None,
+        ) or {"error": "not found or not suggested"}
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
 @mcp.tool()
 def add_correction(project: str, shot_id: int, kind: str, parameters: dict) -> dict:
     """Add a deterministic correction to a shot.

@@ -26,7 +26,7 @@ import numpy as np
 from colorai.color import bt709_to_linear, linear_to_bt709
 from colorai.face import detect_faces, skin_metrics_in_region
 from colorai.frames import extract_frame
-from colorai.project.models import FaceTrack, MediaAsset, Shot, SkinMetric
+from colorai.project.models import FaceCorrection, FaceTrack, MediaAsset, Shot, SkinMetric
 from colorai.project.store import ProjectStore
 from colorai.skin import skin_mask
 from colorai.tracking import match_box, sample_frames, temporal_skin_metrics
@@ -286,3 +286,250 @@ def build_face_track(
         session.flush()
         session.refresh(track)
         return track
+
+
+# ---------------------------------------------------------------------------
+# Face correction lifecycle (draft by agent; approve/enable by human)
+# ---------------------------------------------------------------------------
+
+CLASS_SKIN_MISMATCH = "skin_mismatch"
+CLASS_INTENTIONAL_LIGHTING = "intentional_lighting"
+CLASS_UNCERTAIN = "uncertain"
+CLASSIFICATIONS = (CLASS_SKIN_MISMATCH, CLASS_INTENTIONAL_LIGHTING, CLASS_UNCERTAIN)
+
+STATE_SUGGESTED = "suggested"
+STATE_APPROVED = "approved"
+STATE_REJECTED = "rejected"
+
+
+class ValidationError(ValueError):
+    """A face correction is invalid for preview/render."""
+
+
+def _validate_face_correction_row(session, correction) -> None:
+    """Raise ``ValidationError`` if an enabled correction is unusable."""
+    from colorai.project.models import FaceTrack
+
+    if correction.state != STATE_APPROVED:
+        raise ValidationError(f"face correction {correction.id} is not approved")
+    if correction.kind != "rgb_balance":
+        raise ValidationError(f"unsupported face correction kind {correction.kind!r}")
+    gain = correction.parameters.get("gain") if correction.parameters else None
+    try:
+        validate_gain(gain)
+    except ValueError as exc:
+        raise ValidationError(f"face correction {correction.id} has invalid gain: {exc}")
+    if correction.face_track_id is None:
+        raise ValidationError(f"face correction {correction.id} has no face track")
+    track = session.get(FaceTrack, correction.face_track_id)
+    if track is None:
+        raise ValidationError(f"face correction {correction.id} references a missing track")
+    if track.state != "valid" or not track.keyframes:
+        raise ValidationError(f"face correction {correction.id} has an invalid track")
+    if track.shot_id != correction.shot_id:
+        raise ValidationError(f"face correction {correction.id} track belongs to a different shot")
+    if correction.subject_id is not None and track.subject_id != correction.subject_id:
+        raise ValidationError(f"face correction {correction.id} track belongs to a different subject")
+
+
+def propose_face_correction(
+    store: ProjectStore,
+    *,
+    shot_id: int,
+    subject_id: int,
+    skin_metric_id: int | None,
+    face_track_id: int,
+    reference_shot_id: int | None,
+    reference_group_id: int | None,
+    reason: str,
+    confidence: float,
+    classification: str,
+    gain: tuple[float, float, float],
+) -> FaceCorrection:
+    """Store a *suggested, disabled* local correction (agent draft only).
+
+    Only ``skin_mismatch`` may carry a correction, and it must reference a
+    valid track and capped gains.
+    """
+    from colorai.project.models import FaceTrack
+
+    if classification != CLASS_SKIN_MISMATCH:
+        raise ValueError("only 'skin_mismatch' may carry a face correction")
+    g = validate_gain(gain)
+    with store.session() as session:
+        track = session.get(FaceTrack, face_track_id)
+        if track is None:
+            raise ValueError(f"face track {face_track_id} not found")
+        if track.state != "valid":
+            raise ValueError(f"face track {face_track_id} is not valid")
+        if track.shot_id != shot_id:
+            raise ValueError("face track belongs to a different shot")
+        correction = FaceCorrection(
+            shot_id=shot_id,
+            subject_id=subject_id,
+            skin_metric_id=skin_metric_id,
+            face_track_id=face_track_id,
+            reference_shot_id=reference_shot_id,
+            reference_group_id=reference_group_id,
+            kind="rgb_balance",
+            parameters={"gain": list(g)},
+            reason=reason,
+            confidence=float(confidence),
+            classification=classification,
+            state=STATE_SUGGESTED,
+            enabled=False,
+        )
+        session.add(correction)
+        session.flush()
+        session.refresh(correction)
+        return correction
+
+
+def _correction_dict(c: FaceCorrection) -> dict:
+    return {
+        "id": c.id,
+        "shot_id": c.shot_id,
+        "subject_id": c.subject_id,
+        "skin_metric_id": c.skin_metric_id,
+        "face_track_id": c.face_track_id,
+        "reference_shot_id": c.reference_shot_id,
+        "reference_group_id": c.reference_group_id,
+        "kind": c.kind,
+        "parameters": c.parameters,
+        "reason": c.reason,
+        "confidence": c.confidence,
+        "classification": c.classification,
+        "state": c.state,
+        "enabled": c.enabled,
+    }
+
+
+def list_face_corrections(store: ProjectStore, shot_id: int | None = None) -> list[dict]:
+    from colorai.project.models import Shot
+
+    with store.session() as session:
+        query = session.query(FaceCorrection)
+        if shot_id is not None:
+            query = query.filter_by(shot_id=shot_id)
+        return [_correction_dict(c) for c in query.order_by(FaceCorrection.id).all()]
+
+
+def get_face_correction(store: ProjectStore, correction_id: int) -> dict | None:
+    with store.session() as session:
+        c = session.get(FaceCorrection, correction_id)
+        return _correction_dict(c) if c else None
+
+
+def update_face_correction(
+    store: ProjectStore,
+    correction_id: int,
+    *,
+    reason: str | None = None,
+    confidence: float | None = None,
+    classification: str | None = None,
+    gain: tuple[float, float, float] | None = None,
+) -> dict | None:
+    """Revise a draft correction (agent only; requires ``suggested`` state)."""
+    with store.session() as session:
+        c = session.get(FaceCorrection, correction_id)
+        if c is None or c.state != STATE_SUGGESTED:
+            return None
+        if reason is not None:
+            c.reason = reason
+        if confidence is not None:
+            c.confidence = float(confidence)
+        if classification is not None:
+            if classification not in CLASSIFICATIONS:
+                raise ValueError(f"invalid classification {classification!r}")
+            c.classification = classification
+        if gain is not None:
+            c.parameters = dict(c.parameters or {})
+            c.parameters["gain"] = list(validate_gain(gain))
+        session.flush()
+        session.refresh(c)
+        return _correction_dict(c)
+
+
+def approve_face_correction(store: ProjectStore, correction_id: int) -> dict:
+    """Human action: approve a suggested correction (does not enable it)."""
+    with store.session() as session:
+        c = session.get(FaceCorrection, correction_id)
+        if c is None:
+            return {"error": "not found"}
+        if c.state != STATE_SUGGESTED:
+            return {"error": f"must be suggested (state={c.state})"}
+        c.state = STATE_APPROVED
+        session.flush()
+        return {"id": c.id, "state": c.state}
+
+
+def reject_face_correction(store: ProjectStore, correction_id: int) -> dict:
+    with store.session() as session:
+        c = session.get(FaceCorrection, correction_id)
+        if c is None:
+            return {"error": "not found"}
+        c.state = STATE_REJECTED
+        session.flush()
+        return {"id": c.id, "state": c.state}
+
+
+def mark_face_correction_intentional(store: ProjectStore, correction_id: int) -> dict:
+    with store.session() as session:
+        c = session.get(FaceCorrection, correction_id)
+        if c is None:
+            return {"error": "not found"}
+        c.state = STATE_REJECTED
+        c.classification = CLASS_INTENTIONAL_LIGHTING
+        session.flush()
+        return {"id": c.id, "state": c.state, "classification": c.classification}
+
+
+def enable_face_correction(store: ProjectStore, correction_id: int) -> dict:
+    """Human action: enable an approved correction (the only way to enable)."""
+    with store.session() as session:
+        c = session.get(FaceCorrection, correction_id)
+        if c is None:
+            return {"error": "not found"}
+        if c.state != STATE_APPROVED:
+            return {"error": "must be approved before enabling"}
+        _validate_face_correction_row(session, c)
+        c.enabled = True
+        session.flush()
+        return {"id": c.id, "state": c.state, "enabled": c.enabled}
+
+
+def load_face_correction_specs(
+    store: ProjectStore, shot_id: int
+) -> list[FaceCorrectionSpec]:
+    """Load enabled+approved face corrections for a shot as compositor specs.
+
+    Used by both preview and render so the two paths share the exact same
+    persisted track/mask and compositing code. Raises ``ValidationError`` for
+    any invalid enabled correction (render preflight).
+    """
+    from colorai.project.models import FaceTrack
+
+    with store.session() as session:
+        rows = (
+            session.query(FaceCorrection)
+            .filter_by(shot_id=shot_id, enabled=True)
+            .order_by(FaceCorrection.id)
+            .all()
+        )
+        specs: list[FaceCorrectionSpec] = []
+        for c in rows:
+            _validate_face_correction_row(session, c)
+            track = session.get(FaceTrack, c.face_track_id)
+            gain = tuple(float(v) for v in c.parameters["gain"])
+            specs.append(
+                FaceCorrectionSpec(
+                    id=c.id,
+                    gain=gain,
+                    keyframes=tuple(
+                        tuple(k) for k in (track.keyframes or [])
+                    ),
+                    source_width=track.source_width,
+                    source_height=track.source_height,
+                )
+            )
+        return specs
