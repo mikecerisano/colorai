@@ -303,6 +303,90 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
 
         skin_matching_by_group = {g.id: skin_matching_for_group(g) for g in groups}
 
+        # Skin-appearance target evidence per setup/variant and participant.
+        from colorai.project.models import (
+            FaceMaskTrack as _FaceMaskTrack,
+            SkinAppearanceReference as _SkinRef,
+            SkinAppearanceTarget as _SkinTarget,
+        )
+
+        skin_refs = session.query(_SkinRef).filter_by(asset_id=asset_id).order_by(_SkinRef.id).all()
+        skin_targets = session.query(_SkinTarget).filter(
+            _SkinTarget.group_id.in_([g.id for g in groups])
+        ).order_by(_SkinTarget.id).all()
+        mask_tracks = session.query(_FaceMaskTrack).filter(
+            _FaceMaskTrack.shot_id.in_([s.id for s in shots])
+        ).order_by(_FaceMaskTrack.id).all()
+
+        refs_by_scope: dict[tuple, list[dict]] = {}
+        for r in skin_refs:
+            key = (r.subject_id, r.group_id)
+            refs_by_scope.setdefault(key, []).append(
+                {
+                    "id": r.id,
+                    "role": r.role,
+                    "source_kind": r.source_kind,
+                    "source_shot_id": r.source_shot_id,
+                    "frame_index": r.frame_index,
+                    "state": r.state,
+                }
+            )
+        targets_by_scope: dict[tuple, list[dict]] = {}
+        for t in skin_targets:
+            ref = next((r for r in skin_refs if r.id == t.reference_id), None)
+            targets_by_scope.setdefault((t.subject_id, t.group_id), []).append(
+                {
+                    "id": t.id,
+                    "reference_id": t.reference_id,
+                    "reference_role": ref.role if ref else None,
+                    "profile": t.profile,
+                    "parameters": t.approved_preview_parameters,
+                    "state": t.state,
+                    "rationale": t.rationale,
+                    "confidence": t.confidence,
+                }
+            )
+        masks_by_track: dict[int, dict] = {}
+        for m in mask_tracks:
+            masks_by_track[m.face_track_id] = {
+                "id": m.id,
+                "face_track_id": m.face_track_id,
+                "shot_id": m.shot_id,
+                "backend": m.backend,
+                "strategy": m.strategy,
+                "coverage": m.coverage,
+                "max_gap": m.max_gap,
+                "state": m.state,
+                "review_state": m.review_state,
+                "review_reason": m.review_reason,
+            }
+
+        def skin_targets_for_group(g: ShotGroup) -> list[dict]:
+            out: list[dict] = []
+            member_set = set(member_group_ids[g.id])
+            for subj in subjects:
+                face_metrics = [
+                    m for m in face_rows
+                    if m.subject_id == subj.id and m.shot_id in member_set
+                ]
+                if not face_metrics:
+                    continue
+                track = latest_track_by_metric.get(face_metrics[0].id)
+                mask = masks_by_track.get(track.id) if track else None
+                out.append(
+                    {
+                        "subject_id": subj.id,
+                        "name": subj.name,
+                        "references": refs_by_scope.get((subj.id, g.id), []),
+                        "targets": targets_by_scope.get((subj.id, g.id), []),
+                        "mask": mask,
+                        "has_reviewed_mask": bool(mask and mask["review_state"] == "approved_for_proposal"),
+                    }
+                )
+            return out
+
+        skin_targets_by_group = {g.id: skin_targets_for_group(g) for g in groups}
+
         # Organization suggestions: deterministic buckets over the
         # group-less, non-excused queue (excused = dismissed / intentional).
         org_queue = [s for s in shots if s.group_id is None and not s.excused]
@@ -484,6 +568,7 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
                         if active_by_group[g.id] is None or p["id"] != active_by_group[g.id]["id"]
                     ],
                     "skin_matching": skin_matching_by_group[g.id],
+                    "skin_targets": skin_targets_by_group[g.id],
                 }
                 # Generic groups (including B-roll) are editorial bins, not
                 # interview setup workspaces or matching scopes.
@@ -645,6 +730,21 @@ class NoteIn(BaseModel):
     author: str = "human"
     shot_id: int | None = None
     subject_id: int | None = None
+
+
+class SkinReferenceIn(BaseModel):
+    subject_id: int
+    group_id: int
+    role: str
+    source_shot_id: int | None = None
+    frame_index: int | None = None
+    external_path: str | None = None
+    crop_geometry: dict[str, float] | None = None
+
+
+class FaceMaskReviewIn(BaseModel):
+    review_state: str
+    reason: str = ""
 
 
 def _deviation_dict(d) -> dict[str, Any]:
@@ -1077,6 +1177,74 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
         from colorai.face_corrections import enable_face_correction as _enable
 
         return _enable(store, correction_id)
+
+    # -- skin appearance targets -------------------------------------------
+
+    @app.post("/api/assets/{asset_id}/skin-references", status_code=201)
+    def create_skin_reference_endpoint(asset_id: int, payload: SkinReferenceIn):
+        from colorai.skin_targets import create_skin_reference as _create
+
+        try:
+            ref = _create(
+                store,
+                subject_id=payload.subject_id,
+                group_id=payload.group_id,
+                role=payload.role,
+                source_shot_id=payload.source_shot_id,
+                frame_index=payload.frame_index,
+                external_path=Path(payload.external_path) if payload.external_path else None,
+                crop_geometry=payload.crop_geometry,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"id": ref.id, "role": ref.role, "source_kind": ref.source_kind, "state": ref.state}
+
+    @app.get("/api/face-mask-tracks/{mask_track_id}/contact-sheet.png")
+    def mask_contact_sheet_endpoint(mask_track_id: int):
+        import io
+
+        from colorai.face_masks import make_face_mask_contact_sheet
+
+        try:
+            sheet = make_face_mask_contact_sheet(store, mask_track_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        buf = io.BytesIO()
+        sheet.save(buf, format="PNG")
+        return Response(content=buf.getvalue(), media_type="image/png")
+
+    @app.post("/api/face-mask-tracks/{mask_track_id}/review")
+    def mask_review_endpoint(mask_track_id: int, payload: FaceMaskReviewIn):
+        from colorai.skin_targets import review_face_mask as _review
+
+        try:
+            mask = _review(
+                store, mask_track_id,
+                review_state=payload.review_state, reason=payload.reason,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"id": mask.id, "review_state": mask.review_state, "review_reason": mask.review_reason}
+
+    @app.post("/api/skin-targets/{target_id}/approve")
+    def approve_skin_target_endpoint(target_id: int):
+        from colorai.skin_targets import approve_skin_target as _approve
+
+        try:
+            target = _approve(store, target_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"id": target.id, "state": target.state}
+
+    @app.post("/api/skin-targets/{target_id}/reject")
+    def reject_skin_target_endpoint(target_id: int):
+        from colorai.skin_targets import reject_skin_target as _reject
+
+        try:
+            target = _reject(store, target_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"id": target.id, "state": target.state}
 
     # -- reference proposals ------------------------------------------------
 

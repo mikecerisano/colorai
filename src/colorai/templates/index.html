@@ -300,6 +300,47 @@
             {% endfor %}
           </div>
           {% endfor %}
+
+          <!-- skin target (reference + reviewed mask + approved target) -->
+          <h2>Skin target</h2>
+          {% if not setup.skin_targets %}<p class="muted">No participants for a skin target.</p>{% endif %}
+          {% for st in setup.skin_targets %}
+          <div class="ref-panel" style="margin-top:0.4rem">
+            <div class="row">
+              <span class="name">{{ st.name }}</span>
+              {% if st.has_reviewed_mask %}<span class="badge approved">mask reviewed</span>{% elif st.mask %}<span class="badge">mask {{ st.mask.review_state }}</span>{% else %}<span class="badge">no mask</span>{% endif %}
+            </div>
+            {% if st.mask %}
+            <div class="muted" style="margin:0.25rem 0">
+              mask {{ st.mask.backend }} · {{ st.mask.strategy }} · cov {{ '%.2f'|format(st.mask.coverage) }}
+              {% if st.mask.review_reason %} · {{ st.mask.review_reason }}{% endif %}
+              <a href="/api/face-mask-tracks/{{ st.mask.id }}/contact-sheet.png" target="_blank">contact sheet</a>
+              <div class="row" style="margin-top:0.25rem">
+                <button type="button" onclick="maskReviewAction({{ st.mask.id }}, 'approved_for_proposal')">Approve mask</button>
+                <button type="button" onclick="maskReviewAction({{ st.mask.id }}, 'needs_rebuild')">Needs rebuild</button>
+                <button type="button" onclick="maskReviewAction({{ st.mask.id }}, 'unsafe')">Unsafe</button>
+              </div>
+            </div>
+            {% endif %}
+            {% for r in st.references %}
+            <div class="row"><span class="badge {{ 'approved' if r.state == 'active' else '' }}">{{ r.role }}</span><span class="muted">{{ r.source_kind }} · shot {{ r.source_shot_id or '—' }}</span></div>
+            {% endfor %}
+            {% for t in st.targets %}
+            <div class="corr-row {{ '' if t.state == 'approved' else 'off' }}" style="align-items:flex-start">
+              <div style="flex:1">
+                <span class="badge {{ t.state }}">{{ t.state }}</span>
+                <span class="muted">role {{ t.reference_role or '—' }} · conf {{ t.confidence }}</span>
+                <div class="muted">{{ t.rationale }}</div>
+                <div class="muted">ab_offset [{{ (t.parameters.ab_offset or [0,0])|join(', ') }}] · strength {{ t.parameters.strength or 0 }}</div>
+              </div>
+              {% if t.state == 'suggested' %}
+              <button type="button" onclick="skinTargetAction({{ t.id }}, 'approve')">Approve target</button>
+              <button type="button" onclick="skinTargetAction({{ t.id }}, 'reject')">Reject</button>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+          {% endfor %}
         </div>
         {% endfor %}
       </section>
@@ -942,6 +983,14 @@
     }
     async function faceAction(id, action) {
       await request(`/api/face-corrections/${id}/${action}`, 'POST');
+      reloadPreservingView();
+    }
+    async function maskReviewAction(id, reviewState) {
+      await request(`/api/face-mask-tracks/${id}/review`, 'POST', {review_state: reviewState, reason: ''});
+      reloadPreservingView();
+    }
+    async function skinTargetAction(id, action) {
+      await request(`/api/skin-targets/${id}/${action}`, 'POST');
       reloadPreservingView();
     }
     function toggleCompare(shotId) {
