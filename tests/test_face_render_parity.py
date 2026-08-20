@@ -144,3 +144,121 @@ def test_preview_and_render_match_on_moving_face(tmp_path):
     # Background and second participant are untouched within tolerance.
     assert np.allclose(preview_bgr[0:16, 0:16], source0[0:16, 0:16], atol=6)
     assert np.allclose(preview_bgr[48:56, 48:56], source0[48:56, 48:56], atol=6)
+
+
+def _oval(nx, ny, nw, nh, points=24):
+    import numpy as np
+
+    cx, cy = nx + nw / 2.0, ny + nh / 2.0
+    rx, ry = nw / 2.0, nh / 2.0
+    return [[float(cx + rx * np.cos(2 * np.pi * i / points)), float(cy + ry * np.sin(2 * np.pi * i / points))] for i in range(points)]
+
+
+def _skin_appearance_fixture(tmp_path):
+    """A moving-face asset with one enabled, reviewed skin_appearance correction."""
+    clip = _make_clip(tmp_path)
+
+    from colorai.project import (
+        FaceMaskTrack,
+        FaceTrack,
+        SkinAppearanceTarget,
+        SkinMetric,
+        ProjectStore,
+        make_representative_frame,
+        make_shots,
+    )
+    from colorai.skin_analysis import create_subject
+
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("skin appearance parity")
+    asset = store.add_asset(
+        project.id, source_path=str(clip), frame_rate=25.0,
+        width=64, height=64, frame_count=8,
+    )
+    shots = make_shots(asset, [(0, 7)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        for s in shots:
+            session.refresh(s)
+    shot = shots[0]
+    alice = create_subject(store, asset.id, "Alice")
+    group = create_group(store, asset.id, "interview", kind="setup")
+    assign_shot_group(store, shot.id, group.id)
+
+    still = tmp_path / "skin_still0.png"
+    extract_frame(str(clip), 0, still, fps=25.0)
+
+    with store.session() as session:
+        metric = SkinMetric(
+            shot_id=shot.id, face_index=0, mean_b=0.30, mean_g=0.30, mean_r=0.50,
+            sample_pixels=100, subject_id=alice.id,
+            bbox_x=8, bbox_y=24, bbox_w=16, bbox_h=16,
+        )
+        session.add(metric)
+        session.flush()
+        track = FaceTrack(
+            shot_id=shot.id, skin_metric_id=metric.id, subject_id=alice.id,
+            source_width=64, source_height=64, analysis_scale=64,
+            keyframes=[[0, 0.125, 0.375, 0.25, 0.25], [7, 0.34375, 0.375, 0.25, 0.25]],
+            sample_count=2, tracked_count=2, coverage=1.0, max_gap=0.0,
+            skin_stability=0.01, median_bgr=[0.30, 0.30, 0.50], state="valid",
+        )
+        session.add(track)
+        session.flush()
+        mask = FaceMaskTrack(
+            face_track_id=track.id, shot_id=shot.id, subject_id=alice.id,
+            backend="fallback", backend_version="0", strategy="face_oval_skin",
+            landmark_keyframes=[
+                [0, {"oval": _oval(0.125, 0.375, 0.25, 0.25), "eyes": [], "brows": [], "lips": [], "hairline": []}],
+                [7, {"oval": _oval(0.34375, 0.375, 0.25, 0.25), "eyes": [], "brows": [], "lips": [], "hairline": []}],
+            ],
+            coverage=1.0, max_gap=0.0, review_state="approved_for_proposal",
+        )
+        session.add(mask)
+        session.flush()
+        target = SkinAppearanceTarget(
+            subject_id=alice.id, group_id=group.id, reference_id=None,
+            profile={"mean_ab": [0.0, 0.0], "spread_ab": [0.01, 0.01]},
+            approved_preview_parameters={}, state="approved",
+        )
+        session.add(target)
+        session.flush()
+        session.add(
+            FaceCorrection(
+                shot_id=shot.id, subject_id=alice.id, skin_metric_id=metric.id,
+                face_track_id=track.id, skin_target_id=target.id,
+                reference_group_id=group.id, kind="skin_appearance",
+                parameters={"version": 1, "space": "oklab", "luma_mode": "preserve",
+                            "ab_offset": [-0.03, 0.0], "ab_scale": [1.0, 1.0], "strength": 1.0},
+                reason="reduce red", confidence=0.8, classification="skin_mismatch",
+                state="approved", enabled=True,
+            )
+        )
+        session.add(make_representative_frame(shot, 0, image_path=str(still), frame_rate=25.0))
+        session.commit()
+
+    return store, asset, shot, still
+
+
+@requires_ffmpeg
+def test_skin_appearance_preview_and_render_match_on_moving_face(tmp_path):
+    from colorai.correction import load_corrected_still
+    from colorai.render import render_master
+
+    store, asset, shot, still = _skin_appearance_fixture(tmp_path)
+
+    preview_bgr = load_corrected_still(store, shot)
+    out = render_master(store, asset.id, tmp_path / "out_skin.mp4", crf=0, pixel_format="yuv444p")
+    rendered_frame_png = tmp_path / "skin_rendered0.png"
+    extract_frame(str(out), 0, rendered_frame_png)
+    rendered_bgr = cv2.imread(str(rendered_frame_png), cv2.IMREAD_COLOR)
+
+    assert np.allclose(preview_bgr, rendered_bgr, atol=6)
+
+    source0 = cv2.imread(str(still), cv2.IMREAD_COLOR)
+    # The intended tracked skin region changed (chroma-only, red reduced).
+    assert not np.allclose(preview_bgr[24:40, 8:24], source0[24:40, 8:24], atol=2)
+    # Background and the second participant are untouched within tolerance.
+    assert np.allclose(preview_bgr[0:16, 0:16], source0[0:16, 0:16], atol=6)
+    assert np.allclose(preview_bgr[48:56, 48:56], source0[48:56, 48:56], atol=6)

@@ -130,6 +130,21 @@ Current progress. 471 tests passing.
   workspace`, `build_face_track`, `get_face_track_contact_sheet`,
   `skin_first_match_subject_setup`, `propose/list/get/update_face_correction`);
   approve/enable/reject are human review-UI actions only.
+- **Agent-guided skin targets** — a reviewable skin-appearance workflow that
+  does not repaint or generate pixels. A filmmaker (or an accepted agent
+  suggestion) supplies a reference labelled **accurate skin reference** or
+  **creative look direction** (`SkinAppearanceReference`); an agent inspects a
+  reviewable temporal face-mask track (`FaceMaskTrack`, landmark or labelled
+  fallback) via a contact sheet and records ``approved_for_proposal`` /
+  ``needs_rebuild`` / ``unsafe``; a human approves one
+  `SkinAppearanceTarget`; each angle then derives its own bounded, disabled
+  ``skin_appearance`` correction (`FaceCorrection.kind="skin_appearance"`)
+  from its own masked profile. The colour model is OKLab chroma-only
+  (`luma_mode="preserve"`, `ab_offset` bounded to ±0.04, `ab_scale` to
+  [0.85, 1.15]) applied under the same temporal mask in preview and render;
+  `render.py` aborts before output on an invalid or unreviewed enabled grade.
+  MCP drafts/inspects/validates only; approval, enabling, rejecting, and
+  rendering remain human UI actions.
 - **Approved lighting variants** — a setup family can hold ``variant`` child
   groups (``ShotGroup.parent_id``) for real natural-light changes across an
   interview. Each variant gets its own approved reference (approving a variant

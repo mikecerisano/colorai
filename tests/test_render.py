@@ -254,6 +254,26 @@ def test_enabled_skin_appearance_requires_reviewed_mask_before_output(tmp_path):
     assert not out.exists()
 
 
+def test_render_aborts_for_enabled_skin_appearance_with_cross_scope_target(tmp_path):
+    from colorai.editorial import create_group
+    from colorai.face_corrections import ValidationError
+    from colorai.project import FaceCorrection
+
+    store, asset = _enabled_skin_appearance_store(
+        tmp_path, mask_review_state="approved_for_proposal"
+    )
+    other = create_group(store, asset.id, "other setup", kind="setup")
+    with store.session() as session:
+        fc = session.query(FaceCorrection).filter_by(kind="skin_appearance").one()
+        fc.reference_group_id = other.id
+        session.commit()
+
+    out = tmp_path / "no_output.mp4"
+    with pytest.raises(ValidationError, match="scope"):
+        render_master(store, asset.id, out)
+    assert not out.exists()
+
+
 
 @requires_ffmpeg
 def test_render_master_applies_offset_to_black_shot(tmp_path):

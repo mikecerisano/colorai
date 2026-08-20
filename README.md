@@ -40,6 +40,12 @@ filmmaker always holding final approval.
   match proposals appear. Proposals are deterministic, disabled, and carry
   their reference + group context. Global median matching stays an explicit
   diagnostic, not a default.
+- **Agent-guided skin targets** — for faces no existing shot can fix, supply a
+  reference labelled *accurate* or *creative*, review a temporal face-mask
+  contact sheet, approve one target, and derive a bounded, disabled OKLab
+  chroma-only ``skin_appearance`` correction per angle. No repainting, no
+  whole-frame grade, no claim about a "true" skin tone; preview and render
+  share the same compositor and abort on invalid enabled grades.
 - **Lower-third name suggestions** — persistent lower-third text is detected
   and OCR'd (local Tesseract CLI, optional), split into a candidate name vs
   role/affiliation, and associated with the visible subject only for

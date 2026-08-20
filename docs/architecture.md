@@ -258,6 +258,19 @@ matching is:
   blank/duplicate frames are reported as measurements with interpretation
   notes (bright windows, practicals, dark furniture are often intentional),
   to help an agent compare similar shots — not to trigger automatic fixes.
+* **Face-local correction and skin targets** — the face-first layer
+  (`face_corrections.py`, `face_masks.py`, `skin_targets.py`, `skin_appearance.
+  py`) never grades a whole frame or another participant. `rgb_balance` moves
+  skin under a tracked, feathered face mask; `skin_appearance` is a bounded,
+  chroma-only OKLab transform (`luma_mode="preserve"`, `ab_offset` ±0.04,
+  `ab_scale` [0.85, 1.15]) applied under a *reviewable* temporal face-mask
+  track. A reference is labelled **accurate** or **creative** (creative caps
+  strength and is never an accuracy claim); a mask contact sheet must be
+  reviewed ``approved_for_proposal`` before a target is drafted; a human
+  approves the target and any candidate correction. Preview and
+  `render_master` share the same compositor, and render aborts before output
+  on an invalid or unreviewed enabled grade. This is an evidence workflow, not
+  a claim about a person's "true" skin tone.
 
 ## Agent integration (MCP)
 
