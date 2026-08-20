@@ -14,6 +14,7 @@ Image convention for the compositor: HxWx3 **RGB** uint8 or float in ``[0,1]``.
 
 from __future__ import annotations
 
+import math
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -151,10 +152,13 @@ def apply_face_corrections(
 
     for spec in sorted(corrections, key=lambda c: c.id):
         nx, ny, nw, nh = _interpolate_box(spec.keyframes, frame_index)
-        x0 = max(0, int(round(nx * spec.source_width)))
-        y0 = max(0, int(round(ny * spec.source_height)))
-        x1 = min(w, int(round((nx + nw) * spec.source_width)))
-        y1 = min(h, int(round((ny + nh) * spec.source_height)))
+        # Normalized keyframes map against the *current input* dimensions, so
+        # a track built at one source resolution still lands correctly on a
+        # scaled preview frame.
+        x0 = max(0, int(round(nx * w)))
+        y0 = max(0, int(round(ny * h)))
+        x1 = min(w, int(round((nx + nw) * w)))
+        y1 = min(h, int(round((ny + nh) * h)))
         if x1 <= x0 or y1 <= y0:
             continue
 
@@ -308,7 +312,7 @@ class ValidationError(ValueError):
 
 def _validate_face_correction_row(session, correction) -> None:
     """Raise ``ValidationError`` if an enabled correction is unusable."""
-    from colorai.project.models import FaceTrack
+    from colorai.project.models import FaceTrack, Shot, SkinMetric, Subject
 
     if correction.state != STATE_APPROVED:
         raise ValidationError(f"face correction {correction.id} is not approved")
@@ -331,6 +335,46 @@ def _validate_face_correction_row(session, correction) -> None:
     if correction.subject_id is not None and track.subject_id != correction.subject_id:
         raise ValidationError(f"face correction {correction.id} track belongs to a different subject")
 
+    if not track.source_width or not track.source_height or track.source_width <= 0 or track.source_height <= 0:
+        raise ValidationError(f"face correction {correction.id} has invalid track source dimensions")
+    if track.coverage < MIN_COVERAGE:
+        raise ValidationError(f"face correction {correction.id} track coverage below threshold")
+    if track.max_gap > MAX_GAP_RATIO:
+        raise ValidationError(f"face correction {correction.id} track gap exceeds threshold")
+
+    shot = session.get(Shot, correction.shot_id)
+    if shot is None:
+        raise ValidationError(f"face correction {correction.id} shot is missing")
+
+    # Keyframes must be finite, ordered, normalized inside [0,1], and within
+    # the shot's inclusive frame range.
+    kfs = track.keyframes or []
+    prev_frame: int | None = None
+    for k in kfs:
+        if not isinstance(k, (list, tuple)) or len(k) != 5:
+            raise ValidationError(f"face correction {correction.id} has a malformed keyframe")
+        fi, nx, ny, nw, nh = k
+        if not all(isinstance(v, (int, float)) and math.isfinite(float(v)) for v in (fi, nx, ny, nw, nh)):
+            raise ValidationError(f"face correction {correction.id} has a non-finite keyframe")
+        if not (0.0 <= nx <= 1.0 and 0.0 <= ny <= 1.0 and nx + nw <= 1.0 + 1e-9 and ny + nh <= 1.0 + 1e-9):
+            raise ValidationError(f"face correction {correction.id} has a keyframe outside normalized bounds")
+        if prev_frame is not None and fi <= prev_frame:
+            raise ValidationError(f"face correction {correction.id} keyframes are not ordered")
+        prev_frame = int(fi)
+    if prev_frame is not None:
+        if kfs[0][0] < shot.start_frame or kfs[-1][0] > shot.end_frame:
+            raise ValidationError(f"face correction {correction.id} keyframes are outside the shot range")
+
+    metric = session.get(SkinMetric, track.skin_metric_id)
+    if metric is None or metric.shot_id != correction.shot_id:
+        raise ValidationError(f"face correction {correction.id} track metric/shot mismatch")
+    if metric.subject_id != correction.subject_id:
+        raise ValidationError(f"face correction {correction.id} track metric subject mismatch")
+    if correction.subject_id is not None:
+        subject = session.get(Subject, correction.subject_id)
+        if subject is None or subject.asset_id != shot.asset_id:
+            raise ValidationError(f"face correction {correction.id} subject/asset mismatch")
+
 
 def propose_face_correction(
     store: ProjectStore,
@@ -349,13 +393,20 @@ def propose_face_correction(
     """Store a *suggested, disabled* local correction (agent draft only).
 
     Only ``skin_mismatch`` may carry a correction, and it must reference a
-    valid track and capped gains.
+    valid track whose subject/metric match the requested scope, a candidate
+    shot inside the exact reference group, and the currently approved
+    exact subject×group reference. Gains are **RGB** order.
     """
-    from colorai.project.models import FaceTrack
+    from colorai.editorial import GROUP_KIND_SETUP, GROUP_KIND_VARIANT
+    from colorai.project.models import FaceTrack, Shot, ShotGroup, SkinMetric
+    from colorai.references import approved_reference_for_scope
 
     if classification != CLASS_SKIN_MISMATCH:
         raise ValueError("only 'skin_mismatch' may carry a face correction")
     g = validate_gain(gain)
+    if reference_group_id is None or reference_shot_id is None:
+        raise ValueError("a face correction requires a reference group and reference shot")
+
     with store.session() as session:
         track = session.get(FaceTrack, face_track_id)
         if track is None:
@@ -364,6 +415,36 @@ def propose_face_correction(
             raise ValueError(f"face track {face_track_id} is not valid")
         if track.shot_id != shot_id:
             raise ValueError("face track belongs to a different shot")
+        if track.subject_id != subject_id:
+            raise ValueError("face track belongs to a different subject")
+        if skin_metric_id is not None and track.skin_metric_id != skin_metric_id:
+            raise ValueError("face track belongs to a different skin metric")
+
+        shot = session.get(Shot, shot_id)
+        if shot is None:
+            raise ValueError(f"shot {shot_id} not found")
+        if skin_metric_id is not None:
+            metric = session.get(SkinMetric, skin_metric_id)
+            if metric is None or metric.shot_id != shot_id or metric.subject_id != subject_id:
+                raise ValueError("skin metric does not belong to the requested subject/shot")
+
+        group = session.get(ShotGroup, reference_group_id)
+        if group is None or group.asset_id != shot.asset_id:
+            raise ValueError("reference group not found or belongs to a different asset")
+        if group.kind not in (GROUP_KIND_SETUP, GROUP_KIND_VARIANT):
+            raise ValueError("reference group must be a setup or lighting variant")
+        if shot.group_id != reference_group_id:
+            raise ValueError("candidate shot is outside the reference group")
+
+        ref_shot = session.get(Shot, reference_shot_id)
+        if ref_shot is None or ref_shot.asset_id != shot.asset_id:
+            raise ValueError("reference shot not found or belongs to a different asset")
+        approved = approved_reference_for_scope(
+            store, asset_id=shot.asset_id, subject_id=subject_id, group_id=reference_group_id
+        )
+        if approved != reference_shot_id:
+            raise ValueError("reference shot does not match the approved exact-scope reference")
+
         correction = FaceCorrection(
             shot_id=shot_id,
             subject_id=subject_id,
@@ -439,8 +520,11 @@ def update_face_correction(
         if confidence is not None:
             c.confidence = float(confidence)
         if classification is not None:
-            if classification not in CLASSIFICATIONS:
-                raise ValueError(f"invalid classification {classification!r}")
+            if classification != CLASS_SKIN_MISMATCH:
+                raise ValueError(
+                    "face corrections must remain 'skin_mismatch'; "
+                    "intentional/uncertain are review outcomes, not correction classifications"
+                )
             c.classification = classification
         if gain is not None:
             c.parameters = dict(c.parameters or {})

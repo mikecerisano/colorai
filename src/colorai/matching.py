@@ -298,13 +298,25 @@ def _clip_gain(gain: tuple[float, float, float]) -> tuple[float, float, float]:
 def candidate_skin_gain(
     ref_bgr: tuple[float, float, float], cand_bgr: tuple[float, float, float]
 ) -> tuple[float, float, float] | None:
-    """Per-channel linear gain to move candidate skin toward the reference.
+    """Return **RGB-order** linear gains to move candidate skin toward the reference.
 
-    Returns ``None`` when the difference is within the deadband (already
-    matching) or the candidate channel is degenerate.
+    Inputs are BGR (the order ``SkinMetric.mean_b/g/r`` stores). Outputs are
+    RGB (the order ``FaceCorrection.parameters["gain"]`` and the compositor
+    use). Gains are derived in the same display-linear working space as
+    ``apply_face_corrections``: reorder to RGB, decode with ``bt709_to_linear``,
+    divide reference by candidate, then deadband + clip.
+
+    Returns ``None`` when the difference is within the deadband or the
+    candidate channel is degenerate.
     """
+    from colorai.color import bt709_to_linear
+
+    ref_rgb = np.asarray((ref_bgr[2], ref_bgr[1], ref_bgr[0]), dtype=np.float64)
+    cand_rgb = np.asarray((cand_bgr[2], cand_bgr[1], cand_bgr[0]), dtype=np.float64)
+    ref_lin = bt709_to_linear(ref_rgb)
+    cand_lin = bt709_to_linear(cand_rgb)
     gains: list[float] = []
-    for r, c in zip(ref_bgr, cand_bgr):
+    for r, c in zip(ref_lin, cand_lin):
         if c <= 1e-6:
             return None
         gains.append(float(r) / float(c))
@@ -378,7 +390,8 @@ def skin_first_match_subject_setup(
                     "track_state": "valid" if track else "none",
                     "reference_median_bgr": list(ref_bgr),
                     "candidate_median_bgr": list(cand_bgr),
-                    "gain": list(gain) if gain else None,
+                    # RGB-order linear gains (FaceCorrection/compositor order).
+                    "gain_rgb": list(gain) if gain else None,
                     "coverage": track.coverage if track else None,
                     "stability": track.skin_stability if track else None,
                 }

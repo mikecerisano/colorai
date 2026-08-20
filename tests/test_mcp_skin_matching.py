@@ -123,7 +123,7 @@ def test_skin_first_no_whole_frame_corrections_on_background_diff(tmp_path):
     assert result["status"] == "ok"
     # Skin is identical, so no candidate gain; and there is no whole-frame
     # correction field anywhere in the skin-first result.
-    assert all(c["gain"] is None for c in result["candidates"])
+    assert all(c["gain_rgb"] is None for c in result["candidates"])
     assert "corrections" not in result
     assert "whole_frame" not in result
 
@@ -140,12 +140,13 @@ def test_skin_first_proposes_capped_gain_when_skin_differs(tmp_path):
 
     result = mcp_server.skin_first_match_subject_setup(db, asset.id, alice.id, group.id)
     cand = next(c for c in result["candidates"] if c["shot_id"] == shots[1].id)
-    assert cand["gain"] is not None
-    assert all(0.90 <= g <= 1.10 for g in cand["gain"])
+    assert cand["gain_rgb"] is not None
+    assert all(0.90 <= g <= 1.10 for g in cand["gain_rgb"])
 
 
 def test_propose_face_correction_is_suggested_and_disabled(tmp_path):
     db, asset, shots, alice, group, metrics = _store(tmp_path, n_shots=2)
+    _approved_reference(db, asset, alice, group, shots[0])
     with ProjectStore.open(db).session() as session:
         track_id = session.query(FaceTrack).filter_by(skin_metric_id=metrics[1].id).one().id
 
@@ -162,3 +163,43 @@ def test_propose_face_correction_is_suggested_and_disabled(tmp_path):
         shots[0].id, group.id, "lighting", 0.8, "intentional_lighting", [1.0, 1.0, 1.0],
     )
     assert "error" in bad
+
+
+def test_propose_rejects_track_subject_mismatch(tmp_path):
+    db, asset, shots, alice, group, metrics = _store(tmp_path, n_shots=2)
+    _approved_reference(db, asset, alice, group, shots[0])
+    bob = create_subject(ProjectStore.open(db), asset.id, "Bob")
+    with ProjectStore.open(db).session() as session:
+        track_id = session.query(FaceTrack).filter_by(skin_metric_id=metrics[1].id).one().id
+
+    out = mcp_server.propose_face_correction(
+        db, shots[1].id, bob.id, metrics[1].id, track_id,
+        shots[0].id, group.id, "x", 0.8, "skin_mismatch", [1.0, 1.0, 1.0],
+    )
+    assert "different subject" in out.get("error", "")
+
+
+def test_propose_rejects_wrong_reference_shot(tmp_path):
+    db, asset, shots, alice, group, metrics = _store(tmp_path, n_shots=2)
+    _approved_reference(db, asset, alice, group, shots[0])
+    with ProjectStore.open(db).session() as session:
+        track_id = session.query(FaceTrack).filter_by(skin_metric_id=metrics[1].id).one().id
+
+    out = mcp_server.propose_face_correction(
+        db, shots[1].id, alice.id, metrics[1].id, track_id,
+        shots[1].id, group.id, "x", 0.8, "skin_mismatch", [1.0, 1.0, 1.0],
+    )
+    assert "does not match the approved" in out.get("error", "")
+
+
+def test_update_rejects_non_skin_mismatch_classification(tmp_path):
+    db, asset, shots, alice, group, metrics = _store(tmp_path, n_shots=2)
+    _approved_reference(db, asset, alice, group, shots[0])
+    with ProjectStore.open(db).session() as session:
+        track_id = session.query(FaceTrack).filter_by(skin_metric_id=metrics[1].id).one().id
+    created = mcp_server.propose_face_correction(
+        db, shots[1].id, alice.id, metrics[1].id, track_id,
+        shots[0].id, group.id, "warm", 0.8, "skin_mismatch", [1.0, 1.0, 1.05],
+    )
+    out = mcp_server.update_face_correction(db, created["id"], classification="intentional_lighting")
+    assert "skin_mismatch" in out.get("error", "")

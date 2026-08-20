@@ -202,3 +202,15 @@ def test_skin_corrections_are_report_only(tmp_path):
     with store.session() as session:
         rows = session.query(Correction).filter_by(shot_id=p.shot_id).all()
     assert rows == []
+
+
+def test_candidate_skin_gain_is_rgb_order():
+    from colorai.matching import candidate_skin_gain
+
+    # BGR measurements: reference blue 0.5, candidate blue 0.3 (blue-deficient).
+    gain = candidate_skin_gain((0.5, 0.3, 0.3), (0.3, 0.3, 0.3))
+    assert gain is not None
+    r, g, b = gain
+    assert b > 1.0  # blue boosted
+    assert r == pytest.approx(1.0, abs=1e-9)  # red untouched
+    assert g == pytest.approx(1.0, abs=1e-9)

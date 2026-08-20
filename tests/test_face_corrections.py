@@ -190,6 +190,33 @@ def test_apply_face_corrections_empty_is_identity():
     assert (apply_face_corrections(img, [], frame_index=0) == img).all()
 
 
+def test_rgb_gain_changes_blue_not_red():
+    spec = FaceCorrectionSpec(
+        id=1, gain=(1.0, 1.0, 1.10),
+        keyframes=((0, 0.25, 0.25, 0.5, 0.5),),
+        source_width=64, source_height=64,
+    )
+    img = _image_with_skin_region()
+    out = apply_face_corrections(img, [spec], frame_index=0)
+    # Blue channel (index 2) changed; red (index 0) is untouched within rounding.
+    assert np.allclose(out[20:40, 20:40, 0], img[20:40, 20:40, 0], atol=2)
+    assert not np.allclose(out[20:40, 20:40, 2], img[20:40, 20:40, 2], atol=2)
+
+
+def test_normalized_track_maps_to_preview_dimensions():
+    # A track derived at 1920x1080 must land at the corresponding normalized
+    # position when composited onto a smaller 64x64 preview frame.
+    img = _image_with_skin_region()  # 64x64, skin at pixels 16:48
+    spec = FaceCorrectionSpec(
+        id=1, gain=(1.10, 1.0, 1.0),
+        keyframes=((0, 0.25, 0.25, 0.5, 0.5),),
+        source_width=1920, source_height=1080,
+    )
+    out = apply_face_corrections(img, [spec], frame_index=0)
+    assert not (out[20:40, 20:40] == img[20:40, 20:40]).all()  # mask hit the skin
+    assert (out[0:16, 0:16] == img[0:16, 0:16]).all()  # region above box untouched
+
+
 # -- track builder -----------------------------------------------------------
 
 from colorai.face_corrections import build_face_track
@@ -254,6 +281,7 @@ def test_build_face_track_fails_on_excessive_gap():
 
 def test_preview_applies_face_correction_via_shared_compositor(tmp_path):
     from colorai.correction import load_corrected_still
+    from colorai.editorial import assign_shot_group, create_group
     from colorai.face_corrections import (
         approve_face_correction,
         enable_face_correction,
@@ -265,6 +293,7 @@ def test_preview_applies_face_correction_via_shared_compositor(tmp_path):
         make_representative_frame,
         make_shots,
     )
+    from colorai.references import approve_reference, propose_reference
 
     store = ProjectStore.create(":memory:")
     project = store.create_project("preview face")
@@ -277,6 +306,8 @@ def test_preview_applies_face_correction_via_shared_compositor(tmp_path):
             session.refresh(s)
     shot = shots[0]
     alice = create_subject(store, asset.id, "Alice")
+    group = create_group(store, asset.id, "interview", kind="setup")
+    assign_shot_group(store, shot.id, group.id)
 
     with store.session() as session:
         metric = SkinMetric(
@@ -306,9 +337,15 @@ def test_preview_applies_face_correction_via_shared_compositor(tmp_path):
         session.add(make_representative_frame(shot, 0, image_path=str(still), frame_rate=25.0))
         session.commit()
 
+    ref = propose_reference(
+        store, asset_id=asset.id, shot_id=shot.id, reason="hero",
+        confidence=0.9, subject_id=alice.id, group_id=group.id,
+    )
+    approve_reference(store, ref.id)
+
     c = propose_face_correction(
         store, shot_id=shot.id, subject_id=alice.id, skin_metric_id=metric_id,
-        face_track_id=track_id, reference_shot_id=shot.id, reference_group_id=None,
+        face_track_id=track_id, reference_shot_id=shot.id, reference_group_id=group.id,
         reason="warm", confidence=0.8, classification="skin_mismatch",
         gain=(1.10, 1.0, 1.0),
     )
