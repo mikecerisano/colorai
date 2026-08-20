@@ -442,6 +442,8 @@ def make_face_mask_contact_sheet(
 
         cols = min(4, len(thumbs))
         rows = (len(thumbs) + cols - 1) // cols if cols else 0
+        if not thumbs:
+            return PILImage.new("RGB", (320, 180), (24, 24, 24))
         tw, th = (thumbs[0].size if thumbs else (320, 180))
         sheet = PILImage.new("RGB", (cols * tw, rows * th), (24, 24, 24))
         for i, img in enumerate(thumbs):

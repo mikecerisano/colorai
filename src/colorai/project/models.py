@@ -571,10 +571,11 @@ class FaceTrack(Base):
 class FaceCorrection(Base):
     """A human-reviewable, face-local correction for one subject in a shot.
 
-    Separate from whole-frame ``Correction`` rows. Version one supports only
-    ``kind="rgb_balance"`` with per-channel linear gains clamped to
-    ``[0.90, 1.10]``. ``enabled`` can become true only after approval in the
-    review UI; agents may only draft/revise suggestions.
+    Separate from whole-frame ``Correction`` rows. Supports ``rgb_balance``
+    (per-channel linear gains clamped to ``[0.90, 1.10]``) and
+    ``skin_appearance`` (a bounded OKLab chroma-only transform under a
+    reviewed temporal face mask). ``enabled`` can become true only after
+    approval in the review UI; agents may only draft/revise suggestions.
     """
 
     __tablename__ = "face_corrections"
