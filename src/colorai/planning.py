@@ -268,8 +268,8 @@ def _resulting_state(
     return resulting_group, resulting_excused
 
 
-def _validate(session, plan: OrganizationPlan) -> tuple[list[str], list[str]]:
-    """Full validation: blocking errors and non-blocking warnings."""
+def validate_plan(session, plan: OrganizationPlan) -> tuple[list[str], list[str]]:
+    """Full validation of a persisted plan: blocking errors and warnings."""
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -526,7 +526,7 @@ def validate_organization_plan(store: ProjectStore, plan_id: int) -> dict:
         plan = session.get(OrganizationPlan, plan_id)
         if plan is None:
             return {"error": "plan not found"}
-        errors, warnings = _validate(session, plan)
+        errors, warnings = validate_plan(session, plan)
         return {"plan_id": plan_id, "errors": errors, "warnings": warnings}
 
 
@@ -647,7 +647,7 @@ def apply_organization_plan(store: ProjectStore, plan_id: int) -> dict:
         if plan.state != STATE_APPROVED:
             return {"error": f"plan must be approved (state={plan.state})"}
 
-        errors, warnings = _validate(session, plan)
+        errors, warnings = validate_plan(session, plan)
         if errors:
             return {"error": "validation failed", "errors": errors}
 

@@ -30,12 +30,16 @@ from pydantic import BaseModel
 
 from colorai.correction import load_corrected_still, normalize_parameters, validate_correction
 from colorai.organization import ShotEvidence, suggest_organization
+from colorai.planning import find_broll_group, validate_plan
 from colorai.project.models import (
     Correction,
     FrameMetrics,
     MediaAsset,
     NameSuggestion,
     Note,
+    OrganizationPlan,
+    OrganizationPlanGroup,
+    OrganizationPlanItem,
     Project,
     ReferenceProposal,
     RepresentativeFrame,
@@ -270,6 +274,85 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
             "broll_pile": [briefs_by_id[s.id] for s in broll_pile],
         }
 
+        # Active organization draft (draft/approved), if any, plus validation.
+        active_plan = (
+            session.query(OrganizationPlan)
+            .filter(
+                OrganizationPlan.asset_id == asset_id,
+                OrganizationPlan.state.in_(["draft", "approved"]),
+            )
+            .order_by(OrganizationPlan.id.desc())
+            .first()
+        )
+        organization_draft: dict | None = None
+        if active_plan is not None:
+            plan_groups = (
+                session.query(OrganizationPlanGroup).filter_by(plan_id=active_plan.id).all()
+            )
+            plan_items = (
+                session.query(OrganizationPlanItem).filter_by(plan_id=active_plan.id).all()
+            )
+            errors, warnings = validate_plan(session, active_plan)
+            canonical_broll = find_broll_group(session, asset_id)
+            existing_groups = [
+                {"id": g.id, "name": g.name, "kind": g.kind, "camera": g.camera, "parent_id": g.parent_id}
+                for g in groups
+            ]
+            member_shot_ids: dict[str, list[int]] = {g.draft_key: [] for g in plan_groups}
+            for item in plan_items:
+                if item.destination_type == "planned_group" and item.target_draft_key in member_shot_ids:
+                    member_shot_ids[item.target_draft_key].append(item.shot_id)
+
+            def item_view(item: OrganizationPlanItem) -> dict:
+                return {
+                    "id": item.id,
+                    "shot_id": item.shot_id,
+                    "decision": item.decision,
+                    "destination_type": item.destination_type,
+                    "target_group_id": item.target_group_id,
+                    "target_draft_key": item.target_draft_key,
+                    "reason": item.reason,
+                    "confidence": item.confidence,
+                    "human_override_reason": item.human_override_reason,
+                }
+
+            organization_draft = {
+                "id": active_plan.id,
+                "state": active_plan.state,
+                "summary": active_plan.summary,
+                "author": active_plan.author,
+                "groups": [
+                    {
+                        "draft_key": g.draft_key,
+                        "name": g.name,
+                        "kind": g.kind,
+                        "camera": g.camera,
+                        "parent_draft_key": g.parent_draft_key,
+                        "participant_names": [
+                            subject_names.get(pid, f"subject {pid}") for pid in (g.participant_ids or [])
+                        ],
+                        "reason": g.reason,
+                        "confidence": g.confidence,
+                        "member_shot_ids": member_shot_ids[g.draft_key],
+                    }
+                    for g in plan_groups
+                ],
+                "broll_items": [
+                    {"item": item_view(i), "shot": briefs_by_id.get(i.shot_id)}
+                    for i in plan_items
+                    if i.destination_type == "broll"
+                ],
+                "needs_decision": [
+                    {"item": item_view(i), "shot": briefs_by_id.get(i.shot_id)}
+                    for i in plan_items
+                    if i.decision != "accepted"
+                ],
+                "existing_groups": existing_groups,
+                "broll_group_id": canonical_broll.id if canonical_broll else None,
+                "validation": {"errors": errors, "warnings": warnings},
+                "coverage": {"total_shots": len(shots), "planned": len(plan_items)},
+            }
+
         suggestion_rows = (
             session.query(NameSuggestion).filter_by(asset_id=asset_id).order_by(NameSuggestion.id).all()
         )
@@ -326,6 +409,7 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
             ],
             "shots": [shot_brief(s) for s in shots],
             "organization": organization,
+            "organization_draft": organization_draft,
             "reference_proposals": proposal_dicts,
             "name_suggestions": [
                 {
@@ -434,6 +518,21 @@ class OrganizeIn(BaseModel):
     shot_ids: list[int]
     name: str | None = None
     group_id: int | None = None
+
+
+class PlanItemUpdate(BaseModel):
+    decision: str | None = None
+    destination_type: str | None = None
+    target_group_id: int | None = None
+    target_draft_key: str | None = None
+    human_override_reason: str | None = None
+
+
+class PlanGroupUpdate(BaseModel):
+    name: str | None = None
+    camera: str | None = None
+    kind: str | None = None
+    parent_draft_key: str | None = None
 
 
 class ReferenceProposalIn(BaseModel):
@@ -762,6 +861,101 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             if shot is not None:
                 moved += 1
         return {"action": payload.action, "shots": moved, "group_id": group_id}
+
+    # -- organization plan (draft / stage / validate / approve / apply) -----
+
+    @app.get("/api/assets/{asset_id}/organization-draft")
+    def organization_draft_endpoint(asset_id: int):
+        draft = _workspace(store, asset_id).get("organization_draft")
+        if draft is None:
+            return {"error": "no active draft"}
+        return draft
+
+    @app.patch("/api/plans/{plan_id}/items/{shot_id}")
+    def update_plan_item_endpoint(plan_id: int, shot_id: int, payload: PlanItemUpdate):
+        data = payload.model_dump(exclude_unset=True)
+        with store.session() as session:
+            plan = session.get(OrganizationPlan, plan_id)
+            if plan is None or plan.state != "draft":
+                raise HTTPException(status_code=404, detail="plan not found or not a draft")
+            item = (
+                session.query(OrganizationPlanItem)
+                .filter_by(plan_id=plan_id, shot_id=shot_id)
+                .first()
+            )
+            if item is None:
+                raise HTTPException(status_code=404, detail="item not found")
+            if data.get("decision") is not None:
+                item.decision = data["decision"]
+            if data.get("destination_type") is not None:
+                item.destination_type = data["destination_type"]
+            if "target_group_id" in data:
+                item.target_group_id = data["target_group_id"]
+            if "target_draft_key" in data:
+                item.target_draft_key = data["target_draft_key"]
+            if "human_override_reason" in data:
+                item.human_override_reason = data["human_override_reason"]
+            session.flush()
+            session.refresh(item)
+            return {
+                "id": item.id,
+                "shot_id": item.shot_id,
+                "decision": item.decision,
+                "destination_type": item.destination_type,
+                "target_group_id": item.target_group_id,
+                "target_draft_key": item.target_draft_key,
+                "human_override_reason": item.human_override_reason,
+            }
+
+    @app.patch("/api/plans/{plan_id}/groups/{draft_key}")
+    def update_plan_group_endpoint(plan_id: int, draft_key: str, payload: PlanGroupUpdate):
+        data = payload.model_dump(exclude_unset=True)
+        with store.session() as session:
+            plan = session.get(OrganizationPlan, plan_id)
+            if plan is None or plan.state != "draft":
+                raise HTTPException(status_code=404, detail="plan not found or not a draft")
+            group = (
+                session.query(OrganizationPlanGroup)
+                .filter_by(plan_id=plan_id, draft_key=draft_key)
+                .first()
+            )
+            if group is None:
+                raise HTTPException(status_code=404, detail="group not found")
+            if data.get("name") is not None:
+                group.name = data["name"]
+            if "camera" in data:
+                group.camera = data["camera"] or None
+            if data.get("kind") is not None:
+                group.kind = data["kind"]
+            if "parent_draft_key" in data:
+                group.parent_draft_key = data["parent_draft_key"]
+            session.flush()
+            session.refresh(group)
+            return {
+                "draft_key": group.draft_key,
+                "name": group.name,
+                "kind": group.kind,
+                "camera": group.camera,
+                "parent_draft_key": group.parent_draft_key,
+            }
+
+    @app.post("/api/plans/{plan_id}/validate")
+    def validate_plan_endpoint(plan_id: int):
+        from colorai.planning import validate_organization_plan as _validate
+
+        return _validate(store, plan_id)
+
+    @app.post("/api/plans/{plan_id}/approve")
+    def approve_plan_endpoint(plan_id: int):
+        from colorai.planning import approve_organization_plan as _approve
+
+        return _approve(store, plan_id)
+
+    @app.post("/api/plans/{plan_id}/apply")
+    def apply_plan_endpoint(plan_id: int):
+        from colorai.planning import apply_organization_plan as _apply
+
+        return _apply(store, plan_id)
 
     # -- reference proposals ------------------------------------------------
 

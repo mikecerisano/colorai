@@ -361,8 +361,105 @@
         {% endfor %}
       </section>
 
-      <!-- Needs organization -->
+      <!-- Needs organization / Organization draft -->
       <section id="tab-inbox-pane" class="hidden">
+        {% if ws.organization_draft %}
+        {% set d = ws.organization_draft %}
+        <div class="org-bar row">
+          <span class="badge {{ d.state }}">{{ d.state }}</span>
+          <span class="name">{{ d.summary or 'Organization draft' }}</span>
+          <span class="muted">by {{ d.author }} · coverage {{ d.coverage.planned }}/{{ d.coverage.total_shots }}</span>
+        </div>
+
+        <!-- 1. Proposed setup families -->
+        <h2>Proposed setup families</h2>
+        {% if not (d.groups | selectattr('kind','equalto','setup') | list) %}<p class="muted">None.</p>{% endif %}
+        {% for g in d.groups if g.kind == 'setup' %}
+        <div class="org-cluster">
+          <div class="row">
+            <span class="badge suggested">proposed setup</span>
+            <span class="name">{{ g.name }}</span>
+            {% for p in g.participant_names %}<span class="badge">{{ p }}</span>{% endfor %}
+            <span class="muted">{{ g.member_shot_ids|length }} shot(s)</span>
+          </div>
+          {% if g.reason %}<p class="muted">{{ g.reason }}</p>{% endif %}
+          <div class="filmstrip">
+            {% for sid in g.member_shot_ids %}
+            {% set s = ws.shots | selectattr('id','equalto',sid) | first %}
+            {% if s %}
+            <div class="shot-thumb" data-shot="{{ s.id }}"><img src="/shots/{{ s.id }}/preview.png" alt="shot {{ s.index }}"><div class="meta">shot {{ s.index }} · {{ s.start_tc }}</div></div>
+            {% endif %}
+            {% endfor %}
+          </div>
+          {% for v in d.groups if v.kind == 'variant' and v.parent_draft_key == g.draft_key %}
+          <div class="variant-head">variant: {{ v.name }} ({{ v.member_shot_ids|length }})</div>
+          <div class="filmstrip">
+            {% for sid in v.member_shot_ids %}
+            {% set s = ws.shots | selectattr('id','equalto',sid) | first %}
+            {% if s %}
+            <div class="shot-thumb" data-shot="{{ s.id }}"><img src="/shots/{{ s.id }}/preview.png" alt="shot {{ s.index }}"><div class="meta">shot {{ s.index }} · {{ s.start_tc }}</div></div>
+            {% endif %}
+            {% endfor %}
+          </div>
+          {% endfor %}
+        </div>
+        {% endfor %}
+
+        <!-- 2. B-roll -->
+        <h2>B-roll</h2>
+        {% if not d.broll_items %}<p class="muted">None.</p>{% endif %}
+        <div class="filmstrip">
+          {% for b in d.broll_items %}
+          {% if b.shot %}
+          <div class="shot-thumb" data-shot="{{ b.shot.id }}"><img src="/shots/{{ b.shot.id }}/preview.png" alt="shot {{ b.shot.index }}"><div class="meta">shot {{ b.shot.index }} · {{ b.shot.start_tc }}</div></div>
+          {% endif %}
+          {% endfor %}
+        </div>
+
+        <!-- 3. Needs a decision -->
+        <h2>Needs a decision</h2>
+        {% if not d.needs_decision %}<p class="muted">None.</p>{% endif %}
+        {% for nd in d.needs_decision %}
+        <div class="org-judgment">
+          {% if nd.shot %}<img src="/shots/{{ nd.shot.id }}/preview.png" alt="shot {{ nd.shot.index }}">{% endif %}
+          <div style="flex:1">
+            <div class="row">
+              <span class="badge needs-review">{{ nd.item.decision }}</span>
+              <span>shot {{ nd.shot.index if nd.shot else nd.item.shot_id }} · {{ nd.shot.start_tc if nd.shot else '' }}</span>
+            </div>
+            {% if nd.item.reason %}<div class="muted">{{ nd.item.reason }}</div>{% endif %}
+            {% if nd.item.human_override_reason %}<div class="muted">override: {{ nd.item.human_override_reason }}</div>{% endif %}
+            <div class="row" style="margin-top:0.4rem">
+              <label class="org-check"><input type="radio" name="decision-{{ nd.item.shot_id }}" value="accepted" {% if nd.item.decision == 'accepted' %}checked{% endif %} onchange="stagePlanItem({{ nd.item.shot_id }}, {decision: this.value})"> accept</label>
+              <label class="org-check"><input type="radio" name="decision-{{ nd.item.shot_id }}" value="rejected" {% if nd.item.decision == 'rejected' %}checked{% endif %} onchange="stagePlanItem({{ nd.item.shot_id }}, {decision: this.value})"> reject</label>
+              <select id="dest-{{ nd.item.shot_id }}" onchange="stagePlanItem({{ nd.item.shot_id }}, {destination_type: this.value, target_group_id: this.selectedOptions[0].dataset.gid ? Number(this.selectedOptions[0].dataset.gid) : null, target_draft_key: this.selectedOptions[0].dataset.key || null})">
+                <option value="unresolved" {% if nd.item.destination_type == 'unresolved' %}selected{% endif %}>Unresolved</option>
+                <option value="broll" {% if nd.item.destination_type == 'broll' %}selected{% endif %}>B-roll</option>
+                <option value="intentional_exception" {% if nd.item.destination_type == 'intentional_exception' %}selected{% endif %}>Intentional exception</option>
+                {% for g in d.existing_groups %}<option value="existing_group" data-gid="{{ g.id }}" {% if nd.item.destination_type == 'existing_group' and nd.item.target_group_id == g.id %}selected{% endif %}>Existing: {{ g.name }}</option>{% endfor %}
+                {% for g in d.groups %}<option value="planned_group" data-key="{{ g.draft_key }}" {% if nd.item.destination_type == 'planned_group' and nd.item.target_draft_key == g.draft_key %}selected{% endif %}>Planned: {{ g.name }}</option>{% endfor %}
+              </select>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+
+        <!-- 4. Validation and apply -->
+        <h2>Validation and apply</h2>
+        <div class="ref-panel" id="plan-validation">
+          {% if d.validation.errors %}
+            {% for e in d.validation.errors %}<div class="muted" style="color:var(--amber)">{{ e }}</div>{% endfor %}
+          {% else %}
+            <div class="muted">No blocking errors.</div>
+          {% endif %}
+          {% for w in d.validation.warnings %}<div class="muted">{{ w }}</div>{% endfor %}
+        </div>
+        <div class="row" style="margin-top:0.5rem">
+          <button type="button" id="apply-plan-btn" {% if d.validation.errors %}disabled{% endif %} onclick="applyPlan()">Apply accepted plan</button>
+          {% if d.state == 'draft' %}<button type="button" onclick="approvePlan()">Approve</button>{% endif %}
+          <button type="button" onclick="refreshDraftValidation()">Re-validate</button>
+        </div>
+        {% else %}
         {% set org = ws.organization %}
         {% if not org.queue_shot_ids and not org.dismissed_shots and not org.broll_pile %}<p class="muted">Nothing needs organization.</p>{% endif %}
 
@@ -501,6 +598,7 @@
           </div>
           {% endif %}
         </details>
+        {% endif %}
       </section>
     </main>
   </div>
@@ -514,6 +612,7 @@
 
   <script>
     const ASSET_ID = {{ asset_id if asset_id is not none else "null" }};
+    const PLAN_ID = {{ ws.organization_draft.id if ws.organization_draft else "null" }};
     const HDRS = {'Content-Type':'application/json'};
     const VIEW_KEY = 'colorai.activeView';
 
@@ -756,6 +855,40 @@
       const gid = Number(document.getElementById(selectId).value);
       if (!gid) { alert('Pick a setup first'); return; }
       await organize('assign', {group_id: gid, shot_ids: [shotId]});
+    }
+
+    // -- organization draft (stage / validate / approve / apply) ----------
+    async function stagePlanItem(shotId, patch) {
+      if (PLAN_ID === null) return;
+      await request(`/api/plans/${PLAN_ID}/items/${shotId}`, 'PATCH', patch);
+      refreshDraftValidation();
+    }
+    async function refreshDraftValidation() {
+      if (PLAN_ID === null) return;
+      const res = await request(`/api/plans/${PLAN_ID}/validate`, 'POST');
+      const v = await res.json();
+      const box = document.getElementById('plan-validation');
+      if (box) {
+        const errors = (v.errors || []).map(e => `<div style="color:var(--amber)">${e}</div>`).join('');
+        const warnings = (v.warnings || []).map(w => `<div>${w}</div>`).join('');
+        box.innerHTML = errors || '<div class="muted">No blocking errors.</div>' + warnings;
+        const btn = document.getElementById('apply-plan-btn');
+        if (btn) btn.disabled = (v.errors || []).length > 0;
+      }
+    }
+    async function approvePlan() {
+      if (PLAN_ID === null) return;
+      const res = await request(`/api/plans/${PLAN_ID}/approve`, 'POST');
+      const body = await res.json();
+      if (body.error) { alert(body.error); return; }
+      reloadPreservingView();
+    }
+    async function applyPlan() {
+      if (PLAN_ID === null) return;
+      const res = await request(`/api/plans/${PLAN_ID}/apply`, 'POST');
+      const body = await res.json();
+      if (body.error) { alert(body.error); return; }
+      reloadPreservingView();
     }
 
     // -- corrections / before-after ----------------------------------------
