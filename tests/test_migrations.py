@@ -35,6 +35,9 @@ def test_upgrade_head_creates_full_schema(tmp_path, monkeypatch):
         "frame_metrics",
         "corrections",
         "alembic_version",
+        "organization_plans",
+        "organization_plan_groups",
+        "organization_plan_items",
     }
     assert expected <= names
 
@@ -135,6 +138,9 @@ def test_open_legacy_db_at_older_revision_migrates_forward(tmp_path, monkeypatch
     engine3 = create_engine(url)
     inspector = inspect(engine3)
     assert inspector.has_table("reference_proposals")
+    assert inspector.has_table("organization_plans")
+    assert inspector.has_table("organization_plan_groups")
+    assert inspector.has_table("organization_plan_items")
     assert "review_status" in {c["name"] for c in inspector.get_columns("shots")}
     assert "source_hash" in {c["name"] for c in inspector.get_columns("media_assets")}
     engine3.dispose()

@@ -428,6 +428,108 @@ class NameSuggestion(Base):
     shot: Mapped[Shot] = relationship()
 
 
+class OrganizationPlan(Base):
+    """A durable, reviewable editorial-organization proposal for an asset.
+
+    An agent drafts a plan; a human reviews and approves it; applying the
+    approved plan is an atomic transaction that creates groups/variants and
+    moves shots. States: ``draft`` -> ``approved`` -> ``applied``, with a
+    later un-applied draft marking earlier ones ``superseded``. Applied plans
+    are immutable audit records.
+    """
+
+    __tablename__ = "organization_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("media_assets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    author: Mapped[str] = mapped_column(String(64), nullable=False, default="agent")
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    approved_by: Mapped[str | None] = mapped_column(String(64))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    asset: Mapped[MediaAsset] = relationship()
+    groups: Mapped[list["OrganizationPlanGroup"]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan"
+    )
+    items: Mapped[list["OrganizationPlanItem"]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan"
+    )
+
+
+class OrganizationPlanGroup(Base):
+    """A planned setup or lighting variant inside an organization plan.
+
+    ``draft_key`` is a stable within-plan identifier; ``parent_draft_key``
+    points at another planned group for a variant. ``existing_group_id`` links
+    a planned destination to a current group (for reusing/renaming).
+    ``participant_ids`` are the subjects present in that setup/variant.
+    """
+
+    __tablename__ = "organization_plan_groups"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "draft_key", name="uq_org_plan_group_draft_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("organization_plans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    draft_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="setup")
+    camera: Mapped[str | None] = mapped_column(String(64))
+    parent_draft_key: Mapped[str | None] = mapped_column(String(64))
+    existing_group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shot_groups.id", ondelete="SET NULL")
+    )
+    participant_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[float | None] = mapped_column(Float)
+
+    plan: Mapped[OrganizationPlan] = relationship(back_populates="groups")
+
+
+class OrganizationPlanItem(Base):
+    """One shot's proposed destination inside an organization plan.
+
+    ``decision`` is ``proposed`` / ``accepted`` / ``rejected``; the unique
+    ``(plan_id, shot_id)`` key guarantees a single destination per draft.
+    ``destination_type`` and the target group/draft-key fields record what
+    apply should do for an accepted item.
+    """
+
+    __tablename__ = "organization_plan_items"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "shot_id", name="uq_org_plan_item_shot"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("organization_plans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    shot_id: Mapped[int] = mapped_column(
+        ForeignKey("shots.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    decision: Mapped[str] = mapped_column(String(16), nullable=False, default="proposed")
+    destination_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shot_groups.id", ondelete="SET NULL")
+    )
+    target_draft_key: Mapped[str | None] = mapped_column(String(64))
+    reason: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    evidence: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    human_override_reason: Mapped[str | None] = mapped_column(Text)
+
+    plan: Mapped[OrganizationPlan] = relationship(back_populates="items")
+    shot: Mapped[Shot] = relationship()
+
+
 # Silence unused-import lint for re-exported names.
 __all__ = [
     "Base",
@@ -443,5 +545,8 @@ __all__ = [
     "Note",
     "ReferenceProposal",
     "NameSuggestion",
+    "OrganizationPlan",
+    "OrganizationPlanGroup",
+    "OrganizationPlanItem",
     "utcnow",
 ]

@@ -85,7 +85,8 @@ def set_excused(store: ProjectStore, shot_id: int, excused: bool) -> Shot | None
 GROUP_KIND_SETUP = "setup"
 GROUP_KIND_GENERIC = "generic"
 GROUP_KIND_VARIANT = "variant"
-GROUP_KINDS = (GROUP_KIND_GENERIC, GROUP_KIND_SETUP, GROUP_KIND_VARIANT)
+GROUP_KIND_BROLL = "broll"
+GROUP_KINDS = (GROUP_KIND_GENERIC, GROUP_KIND_SETUP, GROUP_KIND_VARIANT, GROUP_KIND_BROLL)
 
 
 def create_group(
