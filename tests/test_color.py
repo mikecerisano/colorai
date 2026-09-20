@@ -9,11 +9,18 @@ from colorai.color import (
     bt709_oetf,
     bt709_oetf_inverse,
     bt709_to_linear,
+    decode_transfer,
     describe_working_space,
+    encode_transfer,
+    hlg_oetf,
+    hlg_oetf_inverse,
     is_gradeable_transfer,
     linear_to_bt709,
+    non_gradeable_reason,
     normalize_color_space,
     normalize_transfer,
+    pq_eotf,
+    pq_oetf,
     srgb_eotf,
     srgb_oetf,
 )
@@ -72,8 +79,10 @@ def test_is_gradeable_transfer():
     assert is_gradeable_transfer(None) is True  # untagged -> assumed BT.709
     assert is_gradeable_transfer("bt709") is True
     assert is_gradeable_transfer("iec61966-2-1") is True
-    assert is_gradeable_transfer("smpte2084") is False
-    assert is_gradeable_transfer("hlg") is False
+    assert is_gradeable_transfer("smpte2084") is True  # PQ: transfer-native grade
+    assert is_gradeable_transfer("hlg") is True
+    assert is_gradeable_transfer("slog3") is False  # log: never guessed
+    assert is_gradeable_transfer("something-exotic") is False
 
 
 def test_describe_working_space():
@@ -102,3 +111,51 @@ def test_bt709_camera_oetf_standard_values():
     # Round-trip (tolerance absorbs the spec's knee discontinuity).
     xs = np.linspace(0.0, 1.0, 50)
     assert bt709_oetf_inverse(bt709_oetf(xs)) == pytest.approx(xs, abs=1e-4)
+
+
+def test_pq_eotf_standard_values():
+    # SMPTE ST 2084: black stays black, peak normalizes to 1.0, and 50%
+    # code lands at ~94 nits (0.0094 of the 10 000-nit peak).
+    assert pq_eotf(0.0) == pytest.approx(0.0, abs=1e-9)
+    assert pq_eotf(1.0) == pytest.approx(1.0, abs=1e-9)
+    assert pq_eotf(0.5) == pytest.approx(0.0094, abs=2e-3)
+    xs = np.linspace(0.0, 1.0, 50)
+    assert (np.diff(pq_eotf(xs)) >= 0).all()
+
+
+def test_hlg_oetf_roundtrip_and_anchor():
+    # The 0.5 hinge decodes to exactly 1/12 scene-linear.
+    assert hlg_oetf_inverse(0.5) == pytest.approx(1.0 / 12.0, abs=1e-9)
+    assert hlg_oetf(1.0 / 12.0) == pytest.approx(0.5, abs=1e-9)
+    xs = np.linspace(0.0, 1.0, 50)
+    assert hlg_oetf_inverse(hlg_oetf(xs)) == pytest.approx(xs, abs=1e-6)
+
+
+def test_non_gradeable_reason():
+    assert non_gradeable_reason(None) is None
+    assert non_gradeable_reason("bt709") is None
+    assert non_gradeable_reason("smpte2084") is None
+    assert non_gradeable_reason("hlg") is None
+    reason = non_gradeable_reason("slog3")
+    assert reason is not None and "slog3" in reason and "never guessed" in reason
+
+
+def test_pq_oetf_anchors_and_roundtrip():
+    assert pq_oetf(1.0) == pytest.approx(1.0, abs=1e-9)
+    assert pq_oetf(0.0) == pytest.approx(0.0, abs=1e-5)  # curve never touches zero
+    xs = np.linspace(0.0, 1.0, 50)
+    assert pq_eotf(pq_oetf(xs)) == pytest.approx(xs, abs=1e-4)
+    assert pq_oetf(pq_eotf(xs)) == pytest.approx(xs, abs=1e-4)
+
+
+def test_transfer_pair_dispatch_roundtrips():
+    xs = np.linspace(0.02, 0.98, 40)
+    for transfer in ("bt709", "pq", "hlg", None, "smpte2084", "arib-std-b67"):
+        assert encode_transfer(decode_transfer(xs, transfer), transfer) == pytest.approx(xs, abs=2e-3)
+
+
+def test_transfer_pair_rejects_log():
+    with pytest.raises(ValueError, match="never guessed"):
+        decode_transfer(0.5, "slog3")
+    with pytest.raises(ValueError, match="never guessed"):
+        encode_transfer(0.5, "slog3")

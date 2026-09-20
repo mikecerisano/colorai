@@ -98,3 +98,136 @@ def test_stills_are_served(tmp_path):
     response = client.get(f"/stills/{first_rel}")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/png")
+
+
+def test_asset_export_endpoint(tmp_path):
+    from colorai.project.models import Correction
+
+    stills_dir = tmp_path / "stills"
+    stills_dir.mkdir()
+    store = ProjectStore.create(":memory:")
+    _stills_base, _rel = _build_reviewable_project(store, stills_dir)
+    with store.session() as session:
+        from colorai.project.models import Shot
+
+        shot = session.query(Shot).order_by(Shot.index).first()
+        shot_id, asset_id = shot.id, shot.asset_id
+        session.add(
+            Correction(shot_id=shot_id, kind="exposure",
+                       parameters={"gain": 1.2}, enabled=True)
+        )
+        session.commit()
+
+    client = TestClient(create_app(store, str(stills_dir)))
+    response = client.post(f"/api/assets/{asset_id}/export", json={})
+    assert response.status_code == 201
+    body = response.json()
+    assert len(body["shots"]) == 2
+    assert body["shots"][0]["format"] == "cdl"
+    assert body["shots"][1]["format"] == "none"
+    out_dir = Path(body["out_dir"])
+    assert (out_dir / "timeline.edl").exists()
+    assert (out_dir / "manifest.json").exists()
+
+    missing = client.post("/api/assets/9999/export", json={})
+    assert missing.status_code == 404
+
+
+def test_index_switches_between_masters(tmp_path):
+    stills_dir = tmp_path / "stills"
+    stills_dir.mkdir()
+    store = ProjectStore.create(":memory:")
+    first = store.create_project("film one")
+    a1 = store.add_asset(first.id, source_path="/media/one.mov", frame_rate=25.0)
+    second = store.create_project("film two")
+    a2 = store.add_asset(second.id, source_path="/media/two.mov", frame_rate=25.0)
+    from colorai.project import make_shots
+
+    with store.session() as session:
+        session.add_all(make_shots(a1, [(0, 9)]))
+        session.add_all(make_shots(a2, [(0, 19)]))
+        session.commit()
+
+    client = TestClient(create_app(store, str(stills_dir)))
+    home = client.get("/")
+    assert home.status_code == 200
+    assert "film one" in home.text and "film two" in home.text
+    assert "one.mov" in home.text and "two.mov" in home.text
+
+    other = client.get(f"/?asset_id={a2.id}")
+    assert f"value=\"{a2.id}\" selected" in other.text
+
+    fallback = client.get("/?asset_id=9999")
+    assert f"value=\"{a1.id}\" selected" in fallback.text
+
+    by_project = client.get(f"/?project_id={second.id}")
+    assert f"value=\"{a2.id}\" selected" in by_project.text
+
+
+def test_shot_scopes_endpoint(tmp_path):
+    stills_dir = tmp_path / "stills"
+    stills_dir.mkdir()
+    store = ProjectStore.create(":memory:")
+    _stills_base, _rel = _build_reviewable_project(store, stills_dir)
+    with store.session() as session:
+        from colorai.project.models import Shot
+
+        shot_id = session.query(Shot).order_by(Shot.index).first().id
+
+    client = TestClient(create_app(store, str(stills_dir)))
+    response = client.get(f"/shots/{shot_id}/scopes.json")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "corrected"
+    assert body["waveform"]["width"] == 160
+    assert len(body["waveform"]["luma_median"]) == 160
+    assert body["vectorscope"]["size"] == 48
+
+    original = client.get(f"/shots/{shot_id}/scopes.json?source=original")
+    assert original.status_code == 200
+    assert original.json()["source"] == "original"
+
+    assert client.get(f"/shots/{shot_id}/scopes.json?source=bogus").status_code == 400
+    assert client.get("/shots/9999/scopes.json").status_code == 404
+
+
+def test_index_contains_lightbox_viewer(tmp_path):
+    stills_dir = tmp_path / "stills"
+    stills_dir.mkdir()
+    store = ProjectStore.create(":memory:")
+    _stills_base, _rel = _build_reviewable_project(store, stills_dir)
+
+    body = TestClient(create_app(store, str(stills_dir))).get("/").text
+    assert "openLightbox" in body
+    assert "lb-wipe" in body
+    assert "scopes.json" in body
+    assert "keydown" in body
+    assert "lb-wave" in body and "lb-vec" in body
+
+
+def test_index_shows_analysis_tab_and_summaries(tmp_path):
+    from colorai.project.models import Correction, ShotGroup
+
+    stills_dir = tmp_path / "stills"
+    stills_dir.mkdir()
+    store = ProjectStore.create(":memory:")
+    _stills_base, _rel = _build_reviewable_project(store, stills_dir)
+    with store.session() as session:
+        from colorai.project.models import Shot
+
+        shot = session.query(Shot).order_by(Shot.index).first()
+        group = ShotGroup(asset_id=shot.asset_id, name="interview", kind="setup")
+        session.add(group)
+        session.flush()
+        shot.group_id = group.id
+        session.add(
+            Correction(shot_id=shot.id, kind="exposure",
+                       parameters={"gain": 2.0}, enabled=True)
+        )
+        session.commit()
+
+    body = TestClient(create_app(store, str(stills_dir))).get("/").text
+    assert "tab-analysis" in body
+    assert "Shot consistency" in body
+    assert "analysis-ref" in body
+    assert "exposure 2.00× (+1.00 stops)" in body

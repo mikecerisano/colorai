@@ -446,8 +446,17 @@ def _validate_canonical_profile(correction, target) -> None:
 
 def _validate_face_correction_row(session, correction) -> None:
     """Raise ``ValidationError`` if an enabled correction is unusable."""
-    from colorai.project.models import FaceTrack, Shot, SkinMetric, Subject
+    from colorai.color import normalize_transfer
+    from colorai.project.models import FaceTrack, MediaAsset, Shot, SkinMetric, Subject
 
+    shot = session.get(Shot, correction.shot_id)
+    asset = session.get(MediaAsset, shot.asset_id) if shot is not None else None
+    transfer = asset.transfer if asset is not None else "bt709"
+    if normalize_transfer(transfer) != "bt709":
+        raise ValidationError(
+            f"face correction {correction.id} is BT.709-calibrated and cannot "
+            f"enable on a {transfer!r} master; deliver a Rec.709 mezzanine"
+        )
     if correction.state != STATE_APPROVED:
         raise ValidationError(f"face correction {correction.id} is not approved")
     if correction.kind not in ("rgb_balance", "skin_appearance"):
@@ -685,12 +694,25 @@ def update_face_correction(
 
 def approve_face_correction(store: ProjectStore, correction_id: int) -> dict:
     """Human action: approve a suggested correction (does not enable it)."""
+    from colorai.color import normalize_transfer
+    from colorai.project.models import MediaAsset, Shot
+
     with store.session() as session:
         c = session.get(FaceCorrection, correction_id)
         if c is None:
             return {"error": "not found"}
         if c.state != STATE_SUGGESTED:
             return {"error": f"must be suggested (state={c.state})"}
+        shot = session.get(Shot, c.shot_id)
+        asset = session.get(MediaAsset, shot.asset_id) if shot is not None else None
+        transfer = asset.transfer if asset is not None else "bt709"
+        if normalize_transfer(transfer) != "bt709":
+            return {
+                "error": (
+                    "face corrections are BT.709-calibrated and cannot approve on "
+                    f"a {transfer!r} master; deliver a Rec.709 mezzanine"
+                )
+            }
         c.state = STATE_APPROVED
         session.flush()
         return {"id": c.id, "state": c.state}

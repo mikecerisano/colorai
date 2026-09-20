@@ -482,3 +482,32 @@ def test_preview_applies_face_correction_via_shared_compositor(tmp_path):
     out = cv2.cvtColor(out_bgr, cv2.COLOR_BGR2RGB)
     assert not (out[20:40, 20:40] == img[20:40, 20:40]).all()  # skin changed
     assert (out[0:8, 0:8] == img[0:8, 0:8]).all()  # background unchanged
+
+
+def test_face_approve_refused_on_pq_master():
+    from colorai.face_corrections import approve_face_correction
+
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("pq faces")
+    asset = store.add_asset(
+        project.id, source_path="/media/pq.mov", frame_rate=25.0,
+        width=1920, height=1080, transfer="smpte2084",
+    )
+    shots = make_shots(asset, [(0, 49)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        for s in shots:
+            session.refresh(s)
+        correction = FaceCorrection(
+            shot_id=shots[0].id, kind="rgb_balance",
+            parameters={"gain": [1.0, 0.95, 0.90]},
+            reason="", classification="skin_mismatch",
+        )
+        session.add(correction)
+        session.flush()
+        session.refresh(correction)
+        cid = correction.id
+
+    result = approve_face_correction(store, cid)
+    assert "BT.709-calibrated" in result["error"]

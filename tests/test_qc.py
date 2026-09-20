@@ -9,13 +9,17 @@ import pytest
 
 from colorai.project import FrameMetrics, ProjectStore, make_shots
 from colorai.qc import (
+    band_shifts,
     blank_frames_from_lumas,
     clip_flags,
     detect_blank_frames,
     detect_flicker,
+    detect_rolling_shutter,
     duplicate_intervals_from_hashes,
     flicker_intervals,
+    rolling_shutter_metric,
     shot_clip_report,
+    skew_intervals,
 )
 
 
@@ -110,3 +114,65 @@ def test_detect_blank_frames_on_black_clip(tmp_path):
     )
     blanks = detect_blank_frames(clip, 0, 24, 25.0, samples=8)
     assert blanks and all(b.kind == "black" for b in blanks)
+
+
+def _striped_frame(h=32, w=64):
+    import numpy as np
+
+    cols = ((np.arange(w) % 16) < 8).astype(np.uint8) * 255
+    gray = np.tile(cols, (h, 1))
+    return np.stack([gray, gray, gray], axis=-1)
+
+
+def test_band_shifts_uniform_motion_has_zero_skew():
+    import numpy as np
+
+    prev = _striped_frame()
+    curr = np.roll(prev, 3, axis=1)
+    shifts = band_shifts(prev, curr, bands=4, max_lag=8)
+    assert len(shifts) == 4
+    assert len(set(shifts)) == 1  # uniform motion: every band agrees
+    metric = rolling_shutter_metric(prev, curr, bands=4, max_lag=8)
+    assert metric["skew"] == 0
+    assert "not a defect" in metric["note"]
+
+
+def test_band_shifts_shear_has_high_skew():
+    import numpy as np
+
+    prev = _striped_frame()
+    curr = prev.copy()
+    curr[:16] = np.roll(prev[:16], 3, axis=1)
+    curr[16:] = np.roll(prev[16:], -3, axis=1)
+    metric = rolling_shutter_metric(prev, curr, bands=4, max_lag=8)
+    assert metric["skew"] == 6
+    assert metric["band_shifts"][:2] != metric["band_shifts"][2:]
+
+
+def test_band_shifts_flat_frames_report_zero():
+    import numpy as np
+
+    flat = np.zeros((32, 64, 3), dtype=np.uint8)
+    assert band_shifts(flat, flat, bands=4) == [0, 0, 0, 0]
+    with pytest.raises(ValueError, match="same-shaped"):
+        band_shifts(flat, np.zeros((8, 8, 3), dtype=np.uint8))
+
+
+def test_skew_intervals():
+    assert skew_intervals([0.0, 2.0, 2.0, 2.0, 0.0]) == [(1, 3)]
+    assert skew_intervals([0.0, 5.0, 0.0]) == []  # single spike < min_run
+    assert skew_intervals([]) == []
+
+
+@requires_ffmpeg
+def test_detect_rolling_shutter_on_static_clip(tmp_path):
+    clip = tmp_path / "static.mp4"
+    subprocess.run(
+        [
+            ffmpeg, "-v", "error",
+            "-f", "lavfi", "-t", "1", "-i", "color=c=gray:size=64x64:rate=25",
+            "-pix_fmt", "yuv420p", "-c:v", "mpeg4", "-y", str(clip),
+        ],
+        check=True,
+    )
+    assert detect_rolling_shutter(clip, 0, 7, 25.0, samples=8) == []

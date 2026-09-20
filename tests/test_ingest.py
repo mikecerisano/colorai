@@ -136,3 +136,19 @@ def test_drop_frame_detection_for_ntsc_rates():
     assert is_drop_frame(_parse_rate("30000/1001")) is True
     assert is_drop_frame(_parse_rate("60000/1001")) is True
     assert is_drop_frame(_parse_rate("25/1")) is False
+
+
+@requires_ffmpeg
+def test_ingest_declared_transfer_override(sample_video):
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("declared")
+    asset = ingest_media(store, project.id, sample_video, transfer="pq")
+    assert asset.transfer == "pq"
+
+
+@requires_ffmpeg
+def test_ingest_declared_transfer_rejects_log(sample_video):
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("declared bad")
+    with pytest.raises(ValueError, match="never guessed"):
+        ingest_media(store, project.id, sample_video, transfer="slog3")

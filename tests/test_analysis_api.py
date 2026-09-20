@@ -97,3 +97,33 @@ def test_propose_for_shot(tmp_path):
     # Proposals should now show up on the shot.
     shot = client.get(f"/api/shots/{shots[1].id}").json()
     assert shot["corrections"]
+
+
+def test_outliers_carry_human_summaries(tmp_path):
+    client, asset, shots = _client(tmp_path)
+    outliers = client.get(f"/api/assets/{asset.id}/outliers").json()["outliers"]
+    assert outliers[0]["reasons"]
+    assert all("summary" in c for o in outliers for c in o["corrections"])
+    exposure = next(c for o in outliers for c in o["corrections"] if c["kind"] == "exposure")
+    assert "stops" in exposure["summary"]
+
+
+def test_outliers_wide_tolerance_proposes_nothing(tmp_path):
+    client, asset, shots = _client(tmp_path)
+    r = client.get(
+        f"/api/assets/{asset.id}/outliers",
+        params={"luma_tol_stops": 10.0, "balance_tol": 10.0, "saturation_tol": 10.0},
+    )
+    assert r.status_code == 200
+    assert [o for o in r.json()["outliers"] if o["is_outlier"]] == []
+    created = client.post(
+        f"/api/assets/{asset.id}/apply-proposals",
+        params={"luma_tol_stops": 10.0, "balance_tol": 10.0, "saturation_tol": 10.0},
+    ).json()["created"]
+    assert created == []
+
+
+def test_apply_proposals_created_carry_summaries(tmp_path):
+    client, asset, shots = _client(tmp_path)
+    created = client.post(f"/api/assets/{asset.id}/apply-proposals").json()["created"]
+    assert all(c["summary"] for c in created)

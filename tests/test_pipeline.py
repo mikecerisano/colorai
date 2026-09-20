@@ -113,3 +113,18 @@ def test_analyze_preserves_existing_subject_assignments(hardcut_video, tmp_path,
     second = analyze_master(store, project.id, hardcut_video, stills_dir=tmp_path / "stills")
     assert len(second.shots) == 3
     assert len(calls) == 1  # manual assignment preserved; no re-grouping
+
+
+def test_declare_transfer_validates_and_stores(tmp_path):
+    from colorai.pipeline import _declare_transfer
+
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("declared")
+    asset = store.add_asset(project.id, source_path="/media/m.mov", frame_rate=25.0)
+    _declare_transfer(store, asset.id, "smpte2084")
+    with store.session() as session:
+        from colorai.project.models import MediaAsset
+
+        assert session.get(MediaAsset, asset.id).transfer == "pq"
+    with pytest.raises(ValueError, match="never guessed"):
+        _declare_transfer(store, asset.id, "slog3")

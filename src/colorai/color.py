@@ -13,13 +13,21 @@ Two transfer-function families are kept deliberately distinct:
 Conflating the two is a 17%+ error: the camera OETF inverse is for scene-
 linear interchange, the display EOTF is for baked-master decoding.
 
-Everything operates on float arrays in ``[0, 1]``. The **working space** for
-grading is fixed: BT.709 primaries/gamut and the display-referred decode
-(sRGB/BT.1886 EOTF). ffprobe reports a master's actual characteristics
+Everything operates on float arrays in ``[0, 1]``. The whole-frame grade is
+**transfer-aware**: each supported transfer decodes to linear light with its
+own EOTF, grades there, and re-encodes with the matching inverse — so a PQ
+master round-trips through PQ, an HLG master through HLG, with no tone
+mapping and no guessing. ffprobe reports a master's actual characteristics
 (``color_space`` / ``color_transfer``); untagged H.264/MP4 is treated as
-BT.709 by convention. Grading a master whose transfer is *not* BT.709 (e.g.
-PQ/HDR or log) would silently mis-grade, so callers that know the asset should
-check :func:`is_gradeable_transfer` first.
+BT.709 by convention, and an operator may *declare* a transfer at ingest for
+an untagged file (never inferred). Transfers without a known decode/encode
+pair (camera log curves, exotic tags) are refused rather than silently
+mis-graded, so callers that know the asset should check
+:func:`is_gradeable_transfer` first.
+
+The **face/skin subsystem stays BT.709-calibrated** (display-linear
+thresholds validated there); face-local corrections on non-BT.709 assets are
+refused at approve/enable/render time.
 """
 
 from __future__ import annotations
@@ -86,12 +94,17 @@ def normalize_color_space(value: str | None) -> str:
     return aliases.get(v, v)
 
 
+#: Transfers with a known decode/encode pair for the transfer-aware grade.
+SUPPORTED_TRANSFERS = ("bt709", "pq", "hlg")
+
+
 def is_gradeable_transfer(transfer: str | None) -> bool:
-    """True when the correction pipeline's BT.709 working-space assumption holds.
+    """True when the whole-frame grade knows this transfer's EOTF pair.
 
     ``None`` (untagged) is treated as BT.709 and therefore gradeable.
+    Camera log curves and exotic tags have no pair and are refused.
     """
-    return normalize_transfer(transfer) == WORKING_TRANSFER
+    return normalize_transfer(transfer) in SUPPORTED_TRANSFERS
 
 
 def describe_working_space() -> str:
@@ -175,3 +188,125 @@ def bt709_to_linear(rgb: np.ndarray) -> np.ndarray:
 def linear_to_bt709(rgb: np.ndarray) -> np.ndarray:
     """Alias of :func:`srgb_oetf` — display-referred encode for baked masters."""
     return srgb_oetf(rgb)
+
+
+# ---------------------------------------------------------------------------
+# Non-Rec.709 transfer decodes (measurement / future-path helpers)
+# ---------------------------------------------------------------------------
+#
+# The grading pipeline stays BT.709-only (see :func:`is_gradeable_transfer`):
+# these decodes exist so HDR / log-adjacent masters can be *measured* and so a
+# future managed (OCIO) path has spec-standard primitives to build on. They are
+# not wired into grading — nothing here changes the non-Rec.709 refusal.
+
+# SMPTE ST 2084 (PQ) constants: peak 10 000 cd/m^2, output normalized to [0, 1].
+_PQ_M1 = 2610.0 / 16384.0
+_PQ_M2 = 2523.0 / 4096.0 * 128.0
+_PQ_C1 = 3424.0 / 4096.0
+_PQ_C2 = 2413.0 / 4096.0 * 32.0
+_PQ_C3 = 2392.0 / 4096.0 * 32.0
+
+# ARIB STD-B67 (HLG) OETF constants.
+_HLG_A = 0.17883277
+_HLG_B = 0.28466892
+_HLG_C = 0.55991073
+
+
+def pq_eotf(code: np.ndarray) -> np.ndarray:
+    """Decode SMPTE ST 2084 (PQ) code values to normalized linear light.
+
+    Output is relative to the 10 000 cd/m^2 peak (``pq_eotf(1.0)`` is 1.0).
+    Standard value: ``pq_eotf(0.5)`` is ~0.0094 (~94 nits).
+    """
+    n = np.clip(np.asarray(code, dtype=np.float64), 0.0, 1.0)
+    n_pow = np.power(n, 1.0 / _PQ_M2)
+    denom = np.maximum(_PQ_C2 - _PQ_C3 * n_pow, 1e-12)
+    return np.power(np.maximum(n_pow - _PQ_C1, 0.0) / denom, 1.0 / _PQ_M1)
+
+
+def hlg_oetf(scene: np.ndarray) -> np.ndarray:
+    """Encode scene-linear light with the HLG (ARIB STD-B67) OETF."""
+    e = np.clip(np.asarray(scene, dtype=np.float64), 0.0, None)
+    return np.where(
+        e <= 1.0 / 12.0,
+        np.sqrt(3.0 * np.maximum(e, 0.0)),
+        _HLG_A * np.log(12.0 * e - _HLG_B) + _HLG_C,
+    )
+
+
+def hlg_oetf_inverse(code: np.ndarray) -> np.ndarray:
+    """Decode HLG code values back to scene-linear light.
+
+    Standard value: ``hlg_oetf_inverse(0.5)`` is ``1/12`` (~0.0833).
+    """
+    v = np.clip(np.asarray(code, dtype=np.float64), 0.0, 1.0)
+    return np.where(
+        v <= 0.5,
+        v * v / 3.0,
+        (np.exp((v - _HLG_C) / _HLG_A) + _HLG_B) / 12.0,
+    )
+
+
+def non_gradeable_reason(transfer: str | None) -> str | None:
+    """Explain why ``transfer`` cannot be graded, or ``None`` when it can.
+
+    Untagged masters are assumed BT.709 and gradeable, as are PQ and HLG
+    (graded transfer-natively with no tone mapping). Anything without a known
+    decode/encode pair — camera log curves, exotic tags — is refused rather
+    than silently mis-graded.
+    """
+    canonical = normalize_transfer(transfer)
+    if canonical in SUPPORTED_TRANSFERS:
+        return None
+    seen = "untagged" if transfer is None else repr(transfer)
+    return (
+        f"this asset's transfer is {seen} (normalized: {canonical!r}), which has "
+        "no known decode/encode pair — declare PQ/HLG explicitly at ingest when "
+        "that is what the file is, or deliver a Rec.709 mezzanine. Camera log "
+        "is never guessed."
+    )
+
+
+def pq_oetf(linear: np.ndarray) -> np.ndarray:
+    """Encode normalized linear light with the SMPTE ST 2084 (PQ) OETF.
+
+    Inverse of :func:`pq_eotf` for ``[0, 1]`` (relative to the 10 000 cd/m^2
+    peak): ``pq_oetf(1.0)`` is 1.0; ``pq_oetf(0.0)`` is ~7e-7 (the curve
+    never quite touches zero — use an absolute tolerance near black).
+    """
+    y = np.clip(np.asarray(linear, dtype=np.float64), 0.0, 1.0)
+    num = _PQ_C1 + _PQ_C2 * np.power(y, _PQ_M1)
+    den = 1.0 + _PQ_C3 * np.power(y, _PQ_M1)
+    return np.power(num / den, _PQ_M2)
+
+
+def decode_transfer(code: np.ndarray, transfer: str | None) -> np.ndarray:
+    """Decode code values to linear light with ``transfer``'s EOTF.
+
+    Raises ``ValueError`` (with :func:`non_gradeable_reason`) for transfers
+    without a known pair.
+    """
+    canonical = normalize_transfer(transfer)
+    if canonical == "bt709":
+        return srgb_eotf(code)
+    if canonical == "pq":
+        return pq_eotf(code)
+    if canonical == "hlg":
+        return hlg_oetf_inverse(code)
+    raise ValueError(non_gradeable_reason(transfer))
+
+
+def encode_transfer(linear: np.ndarray, transfer: str | None) -> np.ndarray:
+    """Encode linear light to code values with ``transfer``'s inverse EOTF.
+
+    Raises ``ValueError`` (with :func:`non_gradeable_reason`) for transfers
+    without a known pair.
+    """
+    canonical = normalize_transfer(transfer)
+    if canonical == "bt709":
+        return srgb_oetf(linear)
+    if canonical == "pq":
+        return pq_oetf(linear)
+    if canonical == "hlg":
+        return hlg_oetf(linear)
+    raise ValueError(non_gradeable_reason(transfer))

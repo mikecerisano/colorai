@@ -45,18 +45,32 @@ def compute_source_hash(path: str | Path, *, sample_bytes: int = _HASH_SAMPLE_BY
 
 
 def ingest_media(
-    store: ProjectStore, project_id: int, path: str | Path
+    store: ProjectStore, project_id: int, path: str | Path,
+    *, transfer: str | None = None,
 ) -> MediaAsset:
     """Probe ``path`` and register it as a source master on ``project_id``.
 
     Non-destructive: only the probe metadata, a fast content fingerprint, and
     the path are recorded; the source file is never touched.
+
+    ``transfer`` declares the master's transfer function when the container
+    leaves it untagged (or tags it wrong) — it must normalize to a supported
+    transfer (BT.709/PQ/HLG) and is never inferred. ``ValueError`` otherwise.
     """
+    from colorai.color import is_gradeable_transfer, normalize_transfer
+
     probe = probe_media(path)
+    fields = probe.asset_fields()
+    if transfer is not None:
+        if not is_gradeable_transfer(transfer):
+            from colorai.color import non_gradeable_reason
+
+            raise ValueError(non_gradeable_reason(transfer))
+        fields["transfer"] = normalize_transfer(transfer)
     return store.add_asset(
         project_id,
         source_path=probe.source_path,
         frame_rate=probe.frame_rate,
         source_hash=compute_source_hash(path),
-        **probe.asset_fields(),
+        **fields,
     )

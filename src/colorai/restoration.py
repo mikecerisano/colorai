@@ -128,23 +128,8 @@ def propose_restoration(
     )
 
 
-def generative_restore(*args, **kwargs) -> np.ndarray:  # noqa: ANN002, ANN003
-    """Generative reconstruction interface (approval-gated, model-backed).
-
-    Selected local models (see ``docs/research-notes.md``):
-
-    * temporal — **RIFE** (frame interpolation) for missing/damaged frames
-    * spatial  — **LaMa** (inpainting) for damaged regions within a frame
-
-    Both run locally via ONNX Runtime on Apple Silicon. The loader reads model
-    files from ``COLORAI_GENERATIVE_MODEL_DIR`` (see :mod:`colorai.generative`);
-    until the models are installed this raises rather than falling back
-    silently. Deterministic recovery (blend/nearest/median) is available now.
-    """
-    from colorai.generative import generative_models_status
-
-    status = generative_models_status()
-    missing = [
+def _missing_generative(status: dict) -> list[str]:
+    return [
         name
         for name, present in (
             ("onnxruntime", status["onnxruntime"]),
@@ -153,9 +138,55 @@ def generative_restore(*args, **kwargs) -> np.ndarray:  # noqa: ANN002, ANN003
         )
         if not present
     ]
-    raise NotImplementedError(
-        "generative restoration models not installed — missing: "
-        + ", ".join(missing)
-        + f" (model dir: {status['model_dir']}). Deterministic recovery "
-        "(blend/nearest/median) is available now."
-    )
+
+
+def generative_restore(
+    mode: str = "rife",
+    *args,  # noqa: ANN002
+    **kwargs,  # noqa: ANN003
+) -> np.ndarray:
+    """Generative reconstruction (approval-gated, model-backed).
+
+    Selected local models (see ``docs/research-notes.md``):
+
+    * temporal — **RIFE** (frame interpolation) for missing/damaged frames:
+      ``generative_restore("rife", frame0=..., frame1=..., t=0.5)``
+      (``before``/``after`` are accepted as aliases).
+    * spatial — **LaMa** (inpainting) for damaged regions within a frame:
+      ``generative_restore("lama", frame=..., mask=...)``.
+
+    Both run locally via ONNX Runtime on Apple Silicon (see
+    :mod:`colorai.generative`); until the models are installed this raises
+    rather than falling back silently. Deterministic recovery
+    (blend/nearest/median) is available now.
+    """
+    from colorai.generative import generative_models_status
+
+    status = generative_models_status()
+    missing = _missing_generative(status)
+    if missing:
+        raise NotImplementedError(
+            "generative restoration models not installed — missing: "
+            + ", ".join(missing)
+            + f" (model dir: {status['model_dir']}). Deterministic recovery "
+            "(blend/nearest/median) is available now."
+        )
+    from colorai.generative import lama_inpaint, rife_interpolate
+
+    if mode == "rife":
+        frame0 = kwargs.get("frame0", kwargs.get("before"))
+        frame1 = kwargs.get("frame1", kwargs.get("after"))
+        if frame0 is None and args:
+            frame0 = args[0]
+        if frame1 is None and len(args) > 1:
+            frame1 = args[1]
+        if frame0 is None or frame1 is None:
+            raise ValueError("rife mode needs frame0 and frame1 (or before/after)")
+        return rife_interpolate(frame0, frame1, kwargs.get("t", 0.5))
+    if mode == "lama":
+        frame = kwargs.get("frame", args[0] if args else None)
+        mask = kwargs.get("mask", args[1] if len(args) > 1 else None)
+        if frame is None or mask is None:
+            raise ValueError("lama mode needs frame and mask")
+        return lama_inpaint(frame, mask)
+    raise ValueError(f"unknown generative mode {mode!r} (expected 'rife' or 'lama')")

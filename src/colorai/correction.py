@@ -46,7 +46,13 @@ from typing import Any, Iterable
 import cv2
 import numpy as np
 
-from colorai.color import bt709_to_linear, is_gradeable_transfer, linear_to_bt709
+from colorai.color import (
+    bt709_to_linear,
+    decode_transfer,
+    encode_transfer,
+    is_gradeable_transfer,
+    linear_to_bt709,
+)
 from colorai.project.models import Correction, MediaAsset, Shot
 from colorai.project.store import ProjectStore
 
@@ -54,6 +60,50 @@ _LUMA = (0.2126, 0.7152, 0.0722)
 
 # Identity control points for a curve with no explicit shape.
 _IDENTITY_CURVE = [[0.0, 0.0], [1.0, 1.0]]
+
+
+# ---------------------------------------------------------------------------
+# Human-readable summaries (the review UI shows these, not raw dicts)
+# ---------------------------------------------------------------------------
+
+def describe_correction(kind: str, parameters: dict[str, Any]) -> str:
+    """One-line human summary of a correction (deltas, not raw numbers)."""
+    p = parameters or {}
+    if kind == "exposure":
+        gain = float(p.get("gain", 1.0))
+        if gain <= 0:
+            return "exposure to black"
+        stops = math.log2(gain)
+        return f"exposure {gain:.2f}× ({stops:+.2f} stops)"
+    if kind == "offset":
+        return f"lift {float(p.get('value', 0.0)):+.3f}"
+    if kind == "rgb_balance":
+        g = _as_vec3(p.get("gain"), (1.0, 1.0, 1.0))
+        parts = " · ".join(
+            f"{label} {(v - 1.0) * 100.0:+.1f}%" for label, v in zip("RGB", g)
+        )
+        return f"white balance {parts}"
+    if kind == "contrast":
+        return f"contrast ×{float(p.get('amount', 1.0)):.2f} @ {float(p.get('pivot', 0.5)):.2f}"
+    if kind == "saturation":
+        return f"saturation ×{float(p.get('amount', 1.0)):.2f}"
+    if kind == "hue_rotate":
+        return f"hue {float(p.get('degrees', 0.0)):+.1f}°"
+    if kind == "cdl":
+        s = _as_vec3(p.get("slope"), (1.0, 1.0, 1.0))
+        o = _as_vec3(p.get("offset"), (0.0, 0.0, 0.0))
+        pw = _as_vec3(p.get("power"), (1.0, 1.0, 1.0))
+        fmt = lambda v: " ".join(f"{x:.3f}" for x in v)  # noqa: E731
+        return f"CDL S[{fmt(s)}] O[{fmt(o)}] P[{fmt(pw)}]"
+    if kind == "curve":
+        mode = p.get("mode", "rgb")
+        points = p.get("points", _IDENTITY_CURVE)
+        n = sum(len(v) for v in points.values()) if mode == "per_channel" else len(points)
+        return f"curve {mode} ({n} pts)"
+    if kind == "lut":
+        name = Path(p.get("path", "lut")).name or "lut"
+        return f"LUT {name} [{p.get('space', 'linear')}]"
+    return f"{kind} {p}"
 
 
 # ---------------------------------------------------------------------------
@@ -271,26 +321,35 @@ def _apply_linear(lin: np.ndarray, kind: str, parameters: dict[str, Any]) -> np.
     raise ValueError(f"unknown correction kind: {kind!r}")  # pragma: no cover
 
 
-def apply_correction(image_rgb: np.ndarray, kind: str, parameters: dict[str, Any]) -> np.ndarray:
-    """Apply one deterministic correction to an RGB image array."""
+def apply_correction(
+    image_rgb: np.ndarray, kind: str, parameters: dict[str, Any],
+    *, transfer: str | None = "bt709",
+) -> np.ndarray:
+    """Apply one deterministic correction to an RGB image array.
+
+    ``transfer`` selects the decode/encode EOTF pair (BT.709, PQ, or HLG);
+    grading happens in linear light either way.
+    """
     validate_correction(kind, parameters)
     f, was_uint8 = _to_float_rgb(image_rgb)
     if _is_gamma_kind(kind, parameters):
         out = _apply_gamma(f, kind, parameters)
     else:
-        out = linear_to_bt709(_apply_linear(bt709_to_linear(f), kind, parameters))
+        out = encode_transfer(_apply_linear(decode_transfer(f, transfer), kind, parameters), transfer)
     return _finish(out, was_uint8)
 
 
 def apply_corrections(
-    image_rgb: np.ndarray, corrections: Iterable[Correction | tuple[str, dict[str, Any]]]
+    image_rgb: np.ndarray, corrections: Iterable[Correction | tuple[str, dict[str, Any]]],
+    *, transfer: str | None = "bt709",
 ) -> np.ndarray:
     """Apply a sequence of corrections in order (skipping disabled ones).
 
     The sequence composes in **one float pass**: values stay float64 through
     every step and are encoded/quantized exactly once at the end (no per-step
-    uint8 round-trips), and the working space flips between gamma and linear
-    only when an op needs the other space.
+    uint8 round-trips), and the working space flips between code values and
+    linear only when an op needs the other space. ``transfer`` selects the
+    decode/encode EOTF pair (BT.709, PQ, or HLG).
     """
     out, was_uint8 = _to_float_rgb(image_rgb)
     in_linear = False
@@ -304,16 +363,16 @@ def apply_corrections(
         validate_correction(kind, params)
         if _is_gamma_kind(kind, params):
             if in_linear:
-                out = linear_to_bt709(out)
+                out = encode_transfer(out, transfer)
                 in_linear = False
             out = _apply_gamma(out, kind, params)
         else:
             if not in_linear:
-                out = bt709_to_linear(out)
+                out = decode_transfer(out, transfer)
                 in_linear = True
             out = _apply_linear(out, kind, params)
     if in_linear:
-        out = linear_to_bt709(out)
+        out = encode_transfer(out, transfer)
     return _finish(out, was_uint8)
 
 
@@ -347,11 +406,11 @@ def load_corrected_still(
 
     with store.session() as session:
         asset = session.get(MediaAsset, shot.asset_id)
-        if asset is not None and not is_gradeable_transfer(asset.transfer):
-            raise ValueError(
-                "grading is defined in BT.709, but this asset's transfer is "
-                f"{asset.transfer!r}; non-Rec.709 masters are not yet gradeable"
-            )
+        transfer = asset.transfer if asset is not None else "bt709"
+        if not is_gradeable_transfer(transfer):
+            from colorai.color import non_gradeable_reason
+
+            raise ValueError(non_gradeable_reason(transfer))
         rf = session.query(RepresentativeFrame).filter_by(shot_id=shot.id).first()
         if rf is None or not rf.image_path:
             raise ValueError(f"shot {shot.id} has no representative frame")
@@ -371,7 +430,8 @@ def load_corrected_still(
     if bgr is None:
         raise ValueError(f"cannot read still: {str(path)!r}")
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    corrected = apply_corrections(rgb, corrections)  # uint8 RGB out for uint8 in
+    # uint8 RGB out for uint8 in, graded transfer-natively.
+    corrected = apply_corrections(rgb, corrections, transfer=transfer)
 
     # Face-local layer: same persisted track/mask compositor as full render.
     from colorai.face_corrections import (

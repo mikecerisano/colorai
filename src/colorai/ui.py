@@ -27,8 +27,14 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from sqlalchemy import func
 
-from colorai.correction import load_corrected_still, normalize_parameters, validate_correction
+from colorai.correction import (
+    describe_correction,
+    load_corrected_still,
+    normalize_parameters,
+    validate_correction,
+)
 from colorai.organization import ShotEvidence, suggest_organization
 from colorai.planning import find_broll_group, validate_plan
 from colorai.project.models import (
@@ -104,7 +110,8 @@ def _workspace(store: ProjectStore, asset_id: int) -> dict[str, Any]:
         corrections_by_shot: dict[int, list[dict]] = {}
         for c in correction_rows:
             corrections_by_shot.setdefault(c.shot_id, []).append(
-                {"id": c.id, "kind": c.kind, "parameters": c.parameters, "enabled": c.enabled}
+                {"id": c.id, "kind": c.kind, "parameters": c.parameters,
+                 "summary": describe_correction(c.kind, c.parameters), "enabled": c.enabled}
             )
 
         def face_brief(m: SkinMetric) -> dict:
@@ -616,6 +623,7 @@ def _correction_dict(c: Correction) -> dict[str, Any]:
         "shot_id": c.shot_id,
         "kind": c.kind,
         "parameters": c.parameters,
+        "summary": describe_correction(c.kind, c.parameters),
         "enabled": c.enabled,
     }
 
@@ -635,6 +643,10 @@ class CorrectionIn(BaseModel):
 class CorrectionUpdate(BaseModel):
     enabled: bool | None = None
     parameters: dict[str, Any] | None = None
+
+
+class ExportIn(BaseModel):
+    lut_size: int = 33
 
 
 class SubjectIn(BaseModel):
@@ -762,7 +774,11 @@ def _deviation_dict(d) -> dict[str, Any]:
         "luma_delta_stops": d.luma_delta_stops if math.isfinite(d.luma_delta_stops) else None,
         "is_outlier": d.is_outlier,
         "reasons": list(d.reasons),
-        "corrections": [{"kind": c.kind, "parameters": c.parameters} for c in d.corrections],
+        "corrections": [
+            {"kind": c.kind, "parameters": c.parameters,
+             "summary": describe_correction(c.kind, c.parameters)}
+            for c in d.corrections
+        ],
     }
 
 
@@ -789,23 +805,51 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
     # -- pages ---------------------------------------------------------------
 
     @app.get("/")
-    def index(request: Request):
+    def index(request: Request, asset_id: int | None = None, project_id: int | None = None):
         project_names: list[str] = []
-        asset_id: int | None = None
+        project_list: list[dict] = []
+        current_asset_id: int | None = None
         with store.session() as session:
-            project_names = [p.name for p in session.query(Project).order_by(Project.id)]
-            first_asset = session.query(MediaAsset).order_by(MediaAsset.id).first()
-            if first_asset is not None:
-                asset_id = first_asset.id
+            projects = session.query(Project).order_by(Project.id).all()
+            project_names = [p.name for p in projects]
+            assets = session.query(MediaAsset).order_by(MediaAsset.id).all()
+            asset_ids = {a.id for a in assets}
+            shots_by_asset: dict[int, int] = {}
+            for (aid, count) in (
+                session.query(Shot.asset_id, func.count(Shot.id))
+                .group_by(Shot.asset_id).all()
+            ):
+                shots_by_asset[aid] = count
+            for p in projects:
+                project_list.append({
+                    "id": p.id,
+                    "name": p.name,
+                    "assets": [
+                        {
+                            "id": a.id,
+                            "name": Path(a.source_path).name,
+                            "shots": shots_by_asset.get(a.id, 0),
+                        }
+                        for a in assets if a.project_id == p.id
+                    ],
+                })
+            if asset_id in asset_ids:
+                current_asset_id = asset_id
+            elif project_id is not None:
+                first = next((a for a in assets if a.project_id == project_id), None)
+                current_asset_id = first.id if first is not None else None
+            elif assets:
+                current_asset_id = assets[0].id
 
-        workspace = _workspace(store, asset_id) if asset_id is not None else {}
+        workspace = _workspace(store, current_asset_id) if current_asset_id is not None else {}
         subject_names = {s["id"]: s["name"] for s in workspace.get("subjects", [])}
         return templates.TemplateResponse(
             request,
             "index.html",
             {
                 "projects": ", ".join(project_names) or "(none)",
-                "asset_id": asset_id,
+                "project_list": project_list,
+                "asset_id": current_asset_id,
                 "ws": workspace,
                 "subject_names": subject_names,
             },
@@ -1427,28 +1471,78 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
                 raise HTTPException(status_code=404, detail="asset not found")
         return _report(store, asset_id)
 
+    @app.post("/api/assets/{asset_id}/export", status_code=201)
+    def asset_export(asset_id: int, payload: ExportIn | None = None):
+        """Export a Resolve interchange package for an asset (human action).
+
+        Writes per-shot CDL/baked-LUT grades plus EDL/XML into
+        ``<project>/exports/asset_<id>/`` and returns the manifest.
+        """
+        from colorai.interchange import export_package
+
+        with store.session() as session:
+            if session.get(MediaAsset, asset_id) is None:
+                raise HTTPException(status_code=404, detail="asset not found")
+        out_dir = stills.parent / "exports" / f"asset_{asset_id}"
+        try:
+            manifest = export_package(
+                store, asset_id, out_dir,
+                lut_size=payload.lut_size if payload else 33,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        manifest["out_dir"] = str(out_dir)
+        return manifest
+
+    def _outlier_kwargs(
+        luma_tol_stops: float | None, balance_tol: float | None,
+        saturation_tol: float | None,
+    ) -> dict[str, float]:
+        kwargs: dict[str, float] = {}
+        if luma_tol_stops is not None:
+            kwargs["luma_tol_stops"] = luma_tol_stops
+        if balance_tol is not None:
+            kwargs["balance_tol"] = balance_tol
+        if saturation_tol is not None:
+            kwargs["saturation_tol"] = saturation_tol
+        return kwargs
+
     @app.get("/api/assets/{asset_id}/outliers")
-    def asset_outliers(asset_id: int, reference_shot_id: int | None = None):
+    def asset_outliers(
+        asset_id: int, reference_shot_id: int | None = None,
+        luma_tol_stops: float | None = None, balance_tol: float | None = None,
+        saturation_tol: float | None = None,
+    ):
         from colorai.analysis import find_outliers
 
         with store.session() as session:
             if session.get(MediaAsset, asset_id) is None:
                 raise HTTPException(status_code=404, detail="asset not found")
         try:
-            outliers = find_outliers(store, asset_id, reference_shot_id=reference_shot_id)
+            outliers = find_outliers(
+                store, asset_id, reference_shot_id=reference_shot_id,
+                **_outlier_kwargs(luma_tol_stops, balance_tol, saturation_tol),
+            )
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"outliers": [_deviation_dict(d) for d in outliers]}
 
     @app.post("/api/assets/{asset_id}/apply-proposals", status_code=201)
-    def apply_proposals(asset_id: int, reference_shot_id: int | None = None):
+    def apply_proposals(
+        asset_id: int, reference_shot_id: int | None = None,
+        luma_tol_stops: float | None = None, balance_tol: float | None = None,
+        saturation_tol: float | None = None,
+    ):
         from colorai.analysis import find_outliers, persist_proposals
 
         with store.session() as session:
             if session.get(MediaAsset, asset_id) is None:
                 raise HTTPException(status_code=404, detail="asset not found")
         try:
-            outliers = find_outliers(store, asset_id, reference_shot_id=reference_shot_id)
+            outliers = find_outliers(
+                store, asset_id, reference_shot_id=reference_shot_id,
+                **_outlier_kwargs(luma_tol_stops, balance_tol, saturation_tol),
+            )
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         created = persist_proposals(store, outliers)
@@ -1644,6 +1738,36 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
         if not ok:
             raise HTTPException(status_code=500, detail="failed to encode still")
         return Response(content=encoded.tobytes(), media_type="image/png")
+
+    @app.get("/shots/{shot_id}/scopes.json")
+    def shot_scopes(shot_id: int, source: str = "corrected"):
+        """Waveform + vectorscope for a shot's still (corrected or original)."""
+        from colorai.scopes import vectorscope as _vectorscope
+        from colorai.scopes import waveform as _waveform
+
+        with store.session() as session:
+            shot = session.get(Shot, shot_id)
+            if shot is None:
+                raise HTTPException(status_code=404, detail="shot not found")
+        if source == "corrected":
+            image = load_corrected_still(store, shot, base_dir=workspace_root)
+        elif source == "original":
+            with store.session() as session:
+                rf = session.query(RepresentativeFrame).filter_by(shot_id=shot_id).first()
+                still_path = rf.image_path if rf is not None else None
+            if not still_path:
+                raise HTTPException(status_code=404, detail="no still for this shot")
+            image = cv2.imread(str(stored_media_path(still_path)), cv2.IMREAD_COLOR)
+            if image is None:
+                raise HTTPException(status_code=500, detail="cannot read still")
+        else:
+            raise HTTPException(status_code=400, detail="source must be 'corrected' or 'original'")
+        return {
+            "shot_id": shot_id,
+            "source": source,
+            "waveform": _waveform(image),
+            "vectorscope": _vectorscope(image),
+        }
 
     # -- face crop + workspace ----------------------------------------------
 

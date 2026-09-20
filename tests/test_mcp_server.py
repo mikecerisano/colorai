@@ -352,3 +352,24 @@ def test_variant_group_and_cross_variant_tool(tmp_path):
     assert result["family_group_id"] == family["id"]
     # The only variant's median skin equals the subject baseline -> no issue.
     assert all(not v["is_issue"] for v in result["variants"])
+
+
+def test_transfer_gradeability_tool():
+    ok = mcp_server.transfer_gradeability(None)
+    assert ok == {"transfer": None, "gradeable": True, "reason": None}
+    pq = mcp_server.transfer_gradeability("smpte2084")
+    assert pq == {"transfer": "smpte2084", "gradeable": True, "reason": None}
+    bad = mcp_server.transfer_gradeability("slog3")
+    assert bad["gradeable"] is False
+    assert bad["reason"] is not None and "never guessed" in bad["reason"]
+
+
+def test_detect_rolling_shutter_tool(tmp_path, monkeypatch):
+    import colorai.qc as qc
+
+    db, asset, shots, _subject = _make_store(tmp_path)
+    monkeypatch.setattr(qc, "detect_rolling_shutter", lambda *a, **k: [(0, 3)])
+    runs = mcp_server.detect_rolling_shutter(db, shots[0].id)
+    assert runs == [{"start_frame": 0, "end_frame": 3}]
+    with pytest.raises(ValueError, match="shot not found"):
+        mcp_server.detect_rolling_shutter(db, 9999)

@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 471 tests passing.
+Current progress. 592 tests passing.
 
 ## Done
 
@@ -81,10 +81,16 @@ Current progress. 471 tests passing.
 - **Restoration** — deterministic primitives (cross-dissolve, temporal median,
   nearest-good-frame) and a proposal boundary; generative tier is an explicit,
   approval-gated interface.
-- **Generative loader** — `generative.py` resolves RIFE + LaMa ONNX models from
-  `COLORAI_GENERATIVE_MODEL_DIR`, loads them via ONNX Runtime (optional
-  `colorai[generative]` extra), and reports availability
-  (`generative_status` MCP tool); inference I/O lands with the model files.
+- **Generative loader + inference I/O** — `generative.py` resolves RIFE + LaMa
+  ONNX models from `COLORAI_GENERATIVE_MODEL_DIR`, loads them via ONNX
+  Runtime (optional `colorai[generative]` extra), and reports availability
+  (`generative_status` MCP tool). `rife_interpolate` / `lama_inpaint` run
+  the models with contract-adaptive feed construction (split vs. stacked
+  image inputs, optional timestep/mask, NCHW/NHWC outputs — inspected from
+  the session, never assumed), and `restoration.generative_restore`
+  dispatches `rife` / `lama` with the same actionable missing-model error
+  as before when nothing is installed. Only the large model files
+  themselves are still external (gitignored).
 - **Editorial intelligence** — per-shot `review_status` (pending/approved/
   rejected) and `excused` (intentional-exception) flags; scene/camera-family
   `ShotGroup` grouping (with `kind` — `setup` for interview/setup families —
@@ -223,11 +229,14 @@ Current progress. 471 tests passing.
   separate lighting setups. Empty setup cleanup removes its scoped reference
   proposals rather than letting them silently become global references.
 - **Temporal QC** — `qc.py` detects frame-to-frame flicker, per-shot clipped
-  highlights / crushed blacks (from stored luma percentiles), and blank /
-  duplicate damaged-frame signatures; exposed via MCP. Reports carry
-  interpretation notes framing bright/deep-shadow content as *measurements,
-  not defects* — evidence for comparing similar shots, never a batch-fix
-  trigger.
+  highlights / crushed blacks (from stored luma percentiles), blank /
+  duplicate damaged-frame signatures, and **rolling-shutter shear**:
+  per-band horizontal motion via column-profile cross-correlation, with
+  `skew` (max − min band shift) as the shear signature, `skew_intervals`
+  for runs, and `detect_rolling_shutter` over a frame window; exposed via
+  MCP. Reports carry interpretation notes framing bright/deep-shadow
+  content and shear as *measurements, not defects* — evidence for comparing
+  similar shots, never a batch-fix trigger.
 - **Tone curves + `.cube` LUTs** — a `curve` kind (monotonic control points,
   `rgb` / `per_channel` / `luma` modes) and a `lut` kind (1D/3D `.cube`,
   trilinear/linear interpolation, domain clamping), with a `space` tag:
@@ -236,6 +245,35 @@ Current progress. 471 tests passing.
   content hash (persisted on the correction), and caches parse results keyed
   by `(path, mtime, size)`. Preview and render use the same transform, so
   parity is inherent; LUT files are read-only.
+- **Resolve interchange** — `interchange.py` + `colorai export` + a review-UI
+  export endpoint write a per-asset package: exact ASC CDL per shot where the
+  stack folds to one SOP triple (power mapped stored→ASC per the documented
+  convention), a transfer-native baked `.cube` everywhere else (tight on
+  smooth grades, bounded at clip kinks), CMX3600 EDL (exclusive outs) and
+  Resolve-importable FCP7 XML timelines, plus `manifest.json`.
+- **One-command open + project home** — `colorai open <master>` analyzes into
+  a per-master project and serves the review UI; the index lists every
+  project/master with a switcher (`?asset_id=` / `?project_id=`).
+- **Review viewer** — `scopes.py` (waveform + vectorscope, JSON for canvas)
+  with `/shots/{id}/scopes.json`, and a fullscreen inspect lightbox: wipe
+  slider, before/after toggle, scope canvases, keyboard stepping (arrows/B/W/
+  Esc). An **Analysis** tab runs shot consistency in the browser with tunable
+  sensitivity and shows every outlier with its evidence (stops delta, reasons,
+  proposed summaries) before anything is persisted.
+- **Parallel render** — `colorai render --jobs N` threads the Python transform
+  stage (same transforms, same order — byte-identical encoder input, proven
+  by a serial-vs-threaded SHA test); single decode/encode/mux pipeline and
+  all fail-safes unchanged.
+- **Transfer-native whole-frame grade** — BT.709, PQ (ST 2084 both ways), and
+  HLG decode/encode pairs; preview, render (output tags preserved), export,
+  and ingest all honor the asset transfer, and `--transfer` declares it for
+  untagged files (validated, never inferred). Camera log stays refused. The
+  **face/skin subsystem stays BT.709-calibrated**: approve/enable/render
+  refuse face-local grades on non-BT.709 masters with an actionable error.
+- **Trust surface** — `describe_correction` summaries (stops, lifts, balance
+  percentages) replace raw dicts in the review UI, the correction API, and
+  deviation payloads; sensitivity knobs (`luma_tol_stops` / `balance_tol` /
+  `saturation_tol`) are live on the outliers and apply-proposals endpoints.
 - **Docs** — `architecture.md`, `dependency-audit.md`, `research-notes.md`,
   `AGENTS.md`, this file.
 
@@ -243,32 +281,36 @@ Current progress. 471 tests passing.
 
 - Automatic visual camera-angle inference — **intentionally not implemented**;
   setup/camera labels are human/agent-assigned (by design).
-- OCIO integration for non-Rec.709 masters (LUT display/linear spaces and
-  curves are done; OCIO managed color is the remaining piece).
+- OCIO managed color (transfer-native PQ/HLG grading is done; OCIO is the
+  remaining piece for log and exotic gamuts).
 - **Future, separate workflow: log-master finishing** — an editorially locked
   ProRes master in a *declared* log gamut/transfer could be input-transformed
   into a managed working space, organized/matched by setup here, then rendered
-  through an explicit display/output transform. This is not a camera-original
-  or dailies workflow, and source color space must never be guessed.
-- Bundle the generative model files themselves (RIFE + LaMa ONNX) — the loader
-  and status surface are wired; the models are large and gitignored.
-- Per-model RIFE/LaMa inference I/O (pre/post-processing), which depends on the
-  exact ONNX export contract of the chosen checkpoint.
-- Rolling-shutter detection (needs camera-motion priors).
-- Long-form/GPU acceleration for full-master render (the Python streaming path
-  is correctness-first, not fast).
+  through an explicit display/output transform. The declaration plumbing
+  (`--transfer`, validated, never inferred) already exists; the log→working
+  transform does not. This is not a camera-original or dailies workflow, and
+  source color space must never be guessed.
+- Bundle the generative model files themselves (RIFE + LaMa ONNX) — the
+  loader, contract-adaptive inference I/O, and status surface are wired; the
+  models are large and gitignored (see `docs/research-notes.md`).
+- GPU/chunked acceleration for full-master render (the transform stage is now
+  threaded; single-process decode/encode remains).
 - New Alembic revisions for any future schema changes (the machinery exists).
 
 ## Verified
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 471 tests across timecode, project model, migrations (incl. legacy
-  bootstrap), ingest, shot detection, frames, metrics, pipeline (incl.
-  auto-assignment), correction, LUT/curve, render, resumability, editorial,
-  references, matching (incl. variants), analysis, face (incl. bbox), skin,
-  skin analysis, nametag (lower-thirds), tracking, anomaly, QC, generative,
-  restoration, MCP, UI, and CLI.
+- 592 tests across timecode, project model, migrations (incl. legacy
+  bootstrap), ingest (incl. declared transfer), shot detection, frames,
+  metrics, pipeline, correction (incl. transfer-native grade + summaries),
+  LUT/curve, render (incl. threaded parity + PQ tags), resumability,
+  editorial, references, matching (incl. variants), analysis (incl.
+  sensitivity), face (incl. bbox + HDR guards), skin, skin analysis, nametag
+  (lower-thirds), tracking, anomaly, QC (incl. rolling-shutter shear),
+  generative (incl. contract-adaptive inference I/O), restoration,
+  interchange (CDL/LUT/EDL/XML), scopes, MCP, UI (incl. viewer + export),
+  and CLI (incl. open/export).
 - Validated on a lifted 3-minute interview segment of a real 4K master: 45
   shots, three skin subjects separated, and per-subject skin drift flagged
   with proposed corrections.

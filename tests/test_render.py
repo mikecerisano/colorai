@@ -516,14 +516,14 @@ def test_render_preserves_audio_and_color_tags(tmp_path):
 
 
 @requires_ffmpeg
-def test_render_rejects_non_bt709_transfer(tmp_path):
+def test_render_rejects_log_transfer(tmp_path):
     store = ProjectStore.create(":memory:")
-    project = store.create_project("render hdr")
+    project = store.create_project("render log")
     asset = store.add_asset(
-        project.id, source_path="/media/hdr.mov", frame_rate=25.0,
-        width=16, height=16, transfer="smpte2084",
+        project.id, source_path="/media/log.mov", frame_rate=25.0,
+        width=16, height=16, transfer="slog3",
     )
-    with pytest.raises(ValueError, match="not yet gradeable"):
+    with pytest.raises(ValueError, match="never guessed"):
         render_master(store, asset.id, tmp_path / "out.mp4")
 
 
@@ -546,3 +546,86 @@ def test_render_rejects_incomplete_decode(tmp_path):
     )
     with pytest.raises(RuntimeError, match="incomplete output"):
         render_master(store, asset.id, tmp_path / "out.mp4")
+
+
+def test_render_rejects_zero_jobs(tmp_path):
+    store, asset, _shots = _store_with_shots()
+    with pytest.raises(ValueError, match="jobs must be"):
+        render_master(store, asset.id, tmp_path / "x.mp4", jobs=0)
+
+
+@requires_ffmpeg
+def test_render_threaded_matches_serial(tmp_path):
+    import hashlib
+
+    clip = tmp_path / "master.mp4"
+    subprocess.run(
+        [
+            ffmpeg, "-v", "error",
+            "-f", "lavfi", "-t", "1", "-i", "color=c=black:size=32x32:rate=25",
+            "-f", "lavfi", "-t", "1", "-i", "color=c=white:size=32x32:rate=25",
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0,format=yuv420p",
+            "-c:v", "mpeg4", "-y", str(clip),
+        ],
+        check=True,
+    )
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("render parity")
+    asset = store.add_asset(
+        project.id, source_path=str(clip), frame_rate=25.0,
+        width=32, height=32, frame_count=50,
+    )
+    shots = make_shots(asset, [(0, 24), (25, 49)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        for s in shots:
+            session.refresh(s)
+        session.add(Correction(shot_id=shots[0].id, kind="offset", parameters={"value": 0.5}))
+        session.add(Correction(shot_id=shots[1].id, kind="exposure", parameters={"gain": 0.5}))
+        session.commit()
+
+    serial = render_master(store, asset.id, tmp_path / "serial.mp4", jobs=1)
+    seen = []
+    threaded = render_master(
+        store, asset.id, tmp_path / "threaded.mp4", jobs=4,
+        progress=lambda done, _total: seen.append(done),
+    )
+    assert seen and seen[-1] == 50 and seen == sorted(seen)
+    digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+    assert digest(threaded) == digest(serial)
+
+
+@requires_ffmpeg
+def test_render_pq_master_preserves_transfer_tag(tmp_path):
+    clip = tmp_path / "pq.mp4"
+    subprocess.run(
+        [
+            ffmpeg, "-v", "error",
+            "-f", "lavfi", "-t", "1", "-i", "color=c=gray:size=16x16:rate=10",
+            "-pix_fmt", "yuv420p", "-c:v", "mpeg4", "-y", str(clip),
+        ],
+        check=True,
+    )
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("render pq")
+    asset = store.add_asset(
+        project.id, source_path=str(clip), frame_rate=10.0,
+        width=16, height=16, frame_count=10, transfer="smpte2084",
+    )
+    shots = make_shots(asset, [(0, 9)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        for s in shots:
+            session.refresh(s)
+        session.add(Correction(shot_id=shots[0].id, kind="exposure", parameters={"gain": 1.2}))
+        session.commit()
+
+    out = render_master(store, asset.id, tmp_path / "pq-graded.mp4", jobs=2)
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=color_transfer",
+         "-of", "csv=p=0", str(out)],
+        capture_output=True, text=True, check=True,
+    )
+    assert probe.stdout.strip() == "smpte2084"

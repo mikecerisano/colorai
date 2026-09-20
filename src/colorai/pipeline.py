@@ -62,6 +62,35 @@ def _find_asset(
         )
 
 
+def _declare_transfer(store: ProjectStore, asset_id: int, transfer: str) -> None:
+    """Validate and store an operator-declared transfer on an asset.
+
+    Raises ``ValueError`` for anything outside the supported BT.709/PQ/HLG
+    set — a declaration is a claim about the file, so it fails fast.
+    """
+    from colorai.color import is_gradeable_transfer, normalize_transfer
+
+    if not is_gradeable_transfer(transfer):
+        from colorai.color import non_gradeable_reason
+
+        raise ValueError(non_gradeable_reason(transfer))
+    with store.session() as session:
+        asset = session.get(MediaAsset, asset_id)
+        if asset is None:
+            raise ValueError(f"asset {asset_id} not found")
+        asset.transfer = normalize_transfer(transfer)
+        session.commit()
+
+
+def _refresh_asset(store: ProjectStore, asset_id: int) -> MediaAsset:
+    with store.session() as session:
+        asset = session.get(MediaAsset, asset_id)
+        if asset is None:
+            raise ValueError(f"asset {asset_id} not found")
+        session.expunge(asset)
+        return asset
+
+
 def _load_shots(store: ProjectStore, asset: MediaAsset) -> list[Shot]:
     with store.session() as session:
         return (
@@ -206,6 +235,7 @@ def analyze_master(
     threshold: float = DEFAULT_THRESHOLD,
     min_scene_len: int = DEFAULT_MIN_SCENE_LEN,
     resume: bool = True,
+    transfer: str | None = None,
 ) -> AnalysisResult:
     """Analyze one source master end-to-end and persist all results.
 
@@ -218,6 +248,10 @@ def analyze_master(
     shots (e.g. after a manual split/merge), detection is skipped so the edit
     is preserved and only missing stills/metrics/skin are re-derived. Set
     ``resume=False`` to force shot detection from scratch.
+
+    ``transfer`` declares the master's transfer function (BT.709/PQ/HLG) when
+    the container leaves it untagged; it is validated, stored on the asset
+    (fresh or resumed), and never inferred.
     """
     params = {"threshold": threshold, "min_scene_len": min_scene_len}
     source_hash = compute_source_hash(master_path)
@@ -232,9 +266,19 @@ def analyze_master(
         # Cached analysis, but legacy rows may still lack persisted face boxes;
         # backfill is idempotent and bbox-only, so it is safe on every resume.
         backfill_missing_skin_metric_bboxes(store, existing.id)
+        if transfer is not None:
+            _declare_transfer(store, existing.id, transfer)
+            existing = _refresh_asset(store, existing.id)
         return _load_analysis(store, existing)
 
-    asset = existing if existing is not None else ingest_media(store, project_id, master_path)
+    asset = (
+        existing
+        if existing is not None
+        else ingest_media(store, project_id, master_path, transfer=transfer)
+    )
+    if transfer is not None:
+        _declare_transfer(store, asset.id, transfer)
+        asset = _refresh_asset(store, asset.id)
 
     has_shots = len(_load_shots(store, asset)) > 0
     if not resume or not has_shots:

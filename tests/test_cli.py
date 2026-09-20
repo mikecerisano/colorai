@@ -82,3 +82,67 @@ def test_analyze_end_to_end(tmp_path, capsys):
         metrics = conn.execute(text("SELECT COUNT(*) FROM frame_metrics")).scalar()
         assert (shots, frames, metrics) == (2, 2, 2)
     assert len(list((tmp_path / "stills").rglob("*.png"))) == 2
+
+
+def test_export_subcommand_declared():
+    parser = build_parser()
+    args = parser.parse_args(
+        ["export", "--project", "/tmp/x.sqlite3", "--out-dir", "/tmp/resolve"]
+    )
+    assert args.command == "export"
+    assert args.out_dir == "/tmp/resolve"
+    assert args.lut_size == 33
+
+
+def test_export_end_to_end(tmp_path):
+    from colorai.project import ProjectStore, make_shots
+    from colorai.project.models import Correction
+
+    db = tmp_path / "project.sqlite3"
+    store = ProjectStore.create(db)
+    project = store.create_project("film")
+    asset = store.add_asset(project.id, source_path="/media/m.mov", frame_rate=25.0)
+    shots = make_shots(asset, [(0, 24), (25, 49)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        for s in shots:
+            session.refresh(s)
+        session.add(
+            Correction(shot_id=shots[0].id, kind="exposure",
+                       parameters={"gain": 1.5}, enabled=True)
+        )
+        session.commit()
+
+    out_dir = tmp_path / "resolve"
+    assert main(["export", "--project", str(db), "--out-dir", str(out_dir)]) == 0
+    assert (out_dir / "shot_000.cdl").exists()
+    assert (out_dir / "timeline.edl").exists()
+    assert (out_dir / "timeline.xml").exists()
+    assert (out_dir / "manifest.json").exists()
+
+
+def test_open_subcommand_declared():
+    parser = build_parser()
+    args = parser.parse_args(["open", "/media/film.mov"])
+    assert args.command == "open"
+    assert args.master == "/media/film.mov"
+    assert args.projects_dir == "data"
+    assert args.port == 8000
+
+
+def test_project_path_for_master_sanitizes(tmp_path):
+    from colorai.cli import project_path_for_master
+
+    p = project_path_for_master(tmp_path, "/media/My Film (final).mov")
+    assert p.parent.parent == tmp_path
+    assert p.name == "project.sqlite3"
+    assert ".." not in p.parts
+    assert p.parent.name.startswith("My_Film")
+
+
+def test_analyze_and_open_accept_transfer():
+    parser = build_parser()
+    assert parser.parse_args(["analyze", "/m.mov"]).transfer is None
+    assert parser.parse_args(["analyze", "/m.mov", "--transfer", "pq"]).transfer == "pq"
+    assert parser.parse_args(["open", "/m.mov", "--transfer", "hlg"]).transfer == "hlg"

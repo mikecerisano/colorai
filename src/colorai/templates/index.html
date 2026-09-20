@@ -75,12 +75,25 @@
     .modal-card { max-width:min(1100px, 96vw); max-height:94vh; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:auto; padding:0.75rem; }
     .modal-card img { display:block; max-width:100%; max-height:78vh; margin-top:0.6rem; }
     .modal-head { display:flex; justify-content:space-between; align-items:center; gap:1rem; }
+    .wipe-wrap { position:relative; background:#000; border-radius:6px; overflow:hidden; }
+    .wipe-wrap img { display:block; width:100%; margin-top:0; }
+    .wipe-before { position:absolute; inset:0; width:100%; height:100%; }
   </style>
 </head>
 <body>
   <header>
     <h1>ColorAI Review</h1>
-    <span class="muted">{{ projects }}</span>
+    <label class="muted">Master
+      <select onchange="if (this.value) location.href='/?asset_id='+this.value" aria-label="Switch master">
+        {% for project in project_list %}
+        <optgroup label="{{ project.name }}">
+          {% for asset in project.assets %}
+          <option value="{{ asset.id }}" {% if asset.id == asset_id %}selected{% endif %}>{{ asset.name }} · {{ asset.shots }} shots</option>
+          {% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+    </label>
     <span class="muted">· {{ ws.setups|length }} groups · {{ ws.subjects|length }} subjects</span>
   </header>
 
@@ -138,6 +151,7 @@
         <button type="button" class="tab active" id="tab-setups" onclick="showTab('setups')">Setups</button>
         <button type="button" class="tab" id="tab-faces" onclick="showTab('faces')">Face review</button>
         <button type="button" class="tab" id="tab-inbox" onclick="showTab('inbox')">Needs organization</button>
+        <button type="button" class="tab" id="tab-analysis" onclick="showTab('analysis')">Analysis</button>
       </div>
 
       <!-- Setups workspace -->
@@ -245,12 +259,13 @@
             <div class="row">
               <span class="muted">shot {{ s.index }} · {{ s.start_tc }}</span>
               <button type="button" onclick="toggleCompare({{ s.id }})">Before / after</button>
+              <button type="button" onclick="openLightbox({{ s.id }}, 'shot {{ s.index }} · {{ s.start_tc }}')">Inspect</button>
             </div>
             {% for c in s.corrections %}
             <div class="corr-row {{ '' if c.enabled else 'off' }}">
               <input type="checkbox" {% if c.enabled %}checked{% endif %} onchange="toggleCorrection({{ c.id }}, this.checked)">
               <span>{{ c.kind }}</span>
-              <span class="muted">{{ c.parameters }}</span>
+              <span class="muted" title="{{ c.parameters }}">{{ c.summary }}</span>
               <span class="badge {{ 'enabled' if c.enabled else 'proposed' }}">{{ 'enabled' if c.enabled else 'proposed' }}</span>
             </div>
             {% endfor %}
@@ -690,6 +705,29 @@
         </details>
         {% endif %}
       </section>
+
+      <!-- Shot consistency analysis -->
+      <section id="tab-analysis-pane" class="hidden">
+        <h2>Shot consistency</h2>
+        <p class="muted">Compare every shot against a reference and propose deterministic corrections.
+          Tolerances control sensitivity — wider values propose less. Proposals persist
+          <span class="badge proposed">proposed</span> (disabled) until you approve and enable them.</p>
+        <div class="row">
+          <label class="muted">Reference
+            <select id="analysis-ref">
+              <option value="">median shot</option>
+              {% for s in ws.shots %}<option value="{{ s.id }}">shot {{ s.index }} · {{ s.start_tc }}</option>{% endfor %}
+            </select>
+          </label>
+          <label class="muted">Luma tol (stops) <input id="analysis-luma-tol" type="number" step="0.05" min="0" style="width:5rem"></label>
+          <label class="muted">Balance tol <input id="analysis-balance-tol" type="number" step="0.01" min="0" style="width:5rem"></label>
+          <label class="muted">Saturation tol <input id="analysis-sat-tol" type="number" step="0.01" min="0" style="width:5rem"></label>
+          <button type="button" onclick="runAnalysis()">Run analysis</button>
+          <button type="button" onclick="applyAnalysis()">Propose corrections</button>
+        </div>
+        <script type="application/json" id="shot-index-map">{ {% for s in ws.shots %}"{{ s.id }}": {{ s.index }}{% if not loop.last %},{% endif %}{% endfor %} }</script>
+        <div id="analysis-results"></div>
+      </section>
     </main>
   </div>
 
@@ -697,6 +735,30 @@
     <div class="modal-card" onclick="event.stopPropagation()">
       <div class="modal-head"><strong id="face-context-title"></strong><button type="button" onclick="closeFaceContext()">Close</button></div>
       <img id="face-context-image" alt="marked source frame">
+    </div>
+  </div>
+
+  <div id="lightbox" class="modal hidden" onclick="closeLightbox()">
+    <div class="modal-card" onclick="event.stopPropagation()">
+      <div class="modal-head">
+        <strong id="lb-title">Shot</strong>
+        <span class="muted" id="lb-count"></span>
+        <button type="button" onclick="closeLightbox()">Close</button>
+      </div>
+      <div class="wipe-wrap">
+        <img id="lb-after" alt="corrected still">
+        <img id="lb-before" class="wipe-before" alt="original still">
+      </div>
+      <div class="row" style="margin-top:0.5rem">
+        <label class="muted">Before <input id="lb-wipe" type="range" min="0" max="100" value="50" style="width:220px" oninput="lbSetWipe(Number(this.value))" onchange="this.blur()"> After</label>
+        <button type="button" onclick="lbToggleBefore()">Before / after (B)</button>
+        <label class="org-check"><input id="lb-scopes-toggle" type="checkbox" checked onchange="lbScopesVisible()"> scopes (W)</label>
+      </div>
+      <div class="row" id="lb-scopes-row" style="margin-top:0.5rem; align-items:flex-start">
+        <div><div class="muted">Waveform</div><canvas id="lb-wave" width="320" height="180" style="background:#000;border-radius:4px"></canvas></div>
+        <div><div class="muted">Vectorscope</div><canvas id="lb-vec" width="180" height="180" style="background:#000;border-radius:4px"></canvas></div>
+      </div>
+      <p class="muted">← / → step shots · B before-after · W scopes · Esc close</p>
     </div>
   </div>
 
@@ -725,11 +787,48 @@
     }
 
     function showTab(name) {
-      ['setups','faces','inbox'].forEach(t => {
+      ['setups','faces','inbox','analysis'].forEach(t => {
         document.getElementById('tab-'+t+'-pane').classList.toggle('hidden', t !== name);
         document.getElementById('tab-'+t).classList.toggle('active', t === name);
       });
       rememberView({tab: name});
+    }
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    }
+    function analysisParams() {
+      const q = {};
+      const ref = document.getElementById('analysis-ref').value;
+      if (ref) q.reference_shot_id = ref;
+      for (const [id, key] of [['analysis-luma-tol', 'luma_tol_stops'], ['analysis-balance-tol', 'balance_tol'], ['analysis-sat-tol', 'saturation_tol']]) {
+        const v = document.getElementById(id).value;
+        if (v !== '') q[key] = v;
+      }
+      return new URLSearchParams(q).toString();
+    }
+    async function runAnalysis() {
+      const r = await fetch(`/api/assets/${ASSET_ID}/outliers?` + analysisParams());
+      const j = await r.json();
+      const box = document.getElementById('analysis-results');
+      const indexOf = JSON.parse(document.getElementById('shot-index-map').textContent || '{}');
+      const rows = (j.outliers || []).filter(o => o.is_outlier);
+      if (!rows.length) {
+        box.innerHTML = '<p class="muted">No outliers at these tolerances — everything already matches.</p>';
+        return;
+      }
+      box.innerHTML = rows.map(o => {
+        const idx = indexOf[String(o.shot_id)] ?? o.shot_id;
+        const stops = (o.luma_delta_stops === null || o.luma_delta_stops === undefined)
+          ? '' : `<span class="badge">${o.luma_delta_stops >= 0 ? '+' : ''}${Number(o.luma_delta_stops).toFixed(2)} stops</span>`;
+        return `<div class="ref-panel" style="margin-top:0.4rem"><div class="row"><span class="muted">shot ${idx}</span>${stops}</div>` +
+          o.reasons.map(reason => `<div class="muted">why: ${escapeHtml(reason)}</div>`).join('') +
+          o.corrections.map(c => `<div class="muted">proposes: ${escapeHtml(c.summary || c.kind)}</div>`).join('') +
+          `</div>`;
+      }).join('');
+    }
+    async function applyAnalysis() {
+      await request(`/api/assets/${ASSET_ID}/apply-proposals?` + analysisParams(), 'POST');
+      reloadPreservingView();
     }
     function showOrganizationSection(id) {
       showTab('inbox');
@@ -1007,9 +1106,109 @@
       });
     }
 
+    const LB = {shots: [], i: 0};
+    function openLightbox(shotId, label) {
+      LB.shots = [...document.querySelectorAll('.shot-thumb[data-shot]')].map(el => Number(el.dataset.shot));
+      LB.i = Math.max(0, LB.shots.indexOf(shotId));
+      document.getElementById('lb-title').textContent = label || ('shot ' + shotId);
+      document.getElementById('lightbox').classList.remove('hidden');
+      lbShow();
+    }
+    function closeLightbox() {
+      document.getElementById('lightbox').classList.add('hidden');
+    }
+    function lbSetWipe(pct) {
+      document.getElementById('lb-wipe').value = pct;
+      document.getElementById('lb-before').style.clipPath = `inset(0 ${100 - pct}% 0 0)`;
+    }
+    function lbToggleBefore() {
+      lbSetWipe(Number(document.getElementById('lb-wipe').value) >= 50 ? 0 : 100);
+    }
+    function lbScopesVisible() {
+      const on = document.getElementById('lb-scopes-toggle').checked;
+      document.getElementById('lb-scopes-row').classList.toggle('hidden', !on);
+    }
+    async function lbShow() {
+      const id = LB.shots[LB.i];
+      if (id === undefined) return;
+      document.getElementById('lb-count').textContent = `${LB.i + 1} / ${LB.shots.length}`;
+      document.getElementById('lb-after').src = `/shots/${id}/preview.png`;
+      document.getElementById('lb-before').src = `/shots/${id}/original.png`;
+      lbSetWipe(Number(document.getElementById('lb-wipe').value) || 50);
+      try {
+        const r = await fetch(`/shots/${id}/scopes.json`);
+        if (!r.ok) return;
+        const j = await r.json();
+        drawWave(j.waveform);
+        drawVec(j.vectorscope);
+      } catch (_) { /* Scopes are a nicety; the stills still work. */ }
+    }
+    function lbStep(d) {
+      const n = LB.shots.length;
+      if (!n) return;
+      LB.i = (LB.i + d + n) % n;
+      lbShow();
+    }
+    function drawWave(wf) {
+      const c = document.getElementById('lb-wave');
+      const ctx = c.getContext('2d');
+      const W = c.width, H = c.height, n = wf.width;
+      const y = v => H - (v / 255) * H;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#777';
+      ctx.beginPath();
+      wf.luma_max.forEach((v, i) => { const x = (i / (n - 1)) * W; i ? ctx.lineTo(x, y(v)) : ctx.moveTo(x, y(v)); });
+      [...wf.luma_min.keys()].reverse().forEach(i => ctx.lineTo((i / (n - 1)) * W, y(wf.luma_min[i])));
+      ctx.closePath();
+      ctx.fill();
+      const trace = (vals, color) => {
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        vals.forEach((v, i) => { const x = (i / (n - 1)) * W; i ? ctx.lineTo(x, y(v)) : ctx.moveTo(x, y(v)); });
+        ctx.stroke();
+      };
+      trace(wf.luma_median, '#fff');
+      trace(wf.r_mean, '#e55');
+      trace(wf.g_mean, '#5e5');
+      trace(wf.b_mean, '#55e');
+    }
+    function drawVec(vs) {
+      const c = document.getElementById('lb-vec');
+      const ctx = c.getContext('2d');
+      const W = c.width, s = vs.size, cell = W / s;
+      ctx.clearRect(0, 0, W, c.height);
+      ctx.strokeStyle = '#444';
+      ctx.beginPath();
+      ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, c.height);
+      ctx.moveTo(0, c.height / 2); ctx.lineTo(W, c.height / 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(W / 2, c.height / 2, W * 0.42, 0, Math.PI * 2);
+      ctx.stroke();
+      vs.cells.forEach((row, j) => row.forEach((v, i) => {
+        if (v > 0.02) {
+          ctx.fillStyle = `rgba(80,255,120,${v})`;
+          ctx.fillRect(i * cell, j * cell, cell, cell);
+        }
+      }));
+    }
+    document.addEventListener('keydown', e => {
+      if (document.getElementById('lightbox').classList.contains('hidden')) return;
+      if (e.target && e.target.tagName === 'INPUT' && e.key.startsWith('Arrow')) return;
+      if (e.key === 'Escape') closeLightbox();
+      else if (e.key === 'ArrowRight') lbStep(1);
+      else if (e.key === 'ArrowLeft') lbStep(-1);
+      else if (e.key === 'b' || e.key === 'B') lbToggleBefore();
+      else if (e.key === 'w' || e.key === 'W') {
+        const t = document.getElementById('lb-scopes-toggle');
+        t.checked = !t.checked;
+        lbScopesVisible();
+      }
+    });
+
     function restoreView() {
       const view = savedView();
-      if (view.tab === 'faces' || view.tab === 'inbox') {
+      if (view.tab === 'faces' || view.tab === 'inbox' || view.tab === 'analysis') {
         showTab(view.tab);
       } else {
         const selected = document.querySelector(`.setup-card[data-setup="${view.setupId}"],.variant-card[data-setup="${view.setupId}"]`);

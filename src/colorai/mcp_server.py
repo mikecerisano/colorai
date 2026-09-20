@@ -336,6 +336,47 @@ def detect_blank_frames(project: str, shot_id: int, samples: int = 24) -> list[d
 
 
 @mcp.tool()
+def detect_rolling_shutter(project: str, shot_id: int, samples: int = 12) -> list[dict]:
+    """Flag runs of high inter-frame shear (a rolling-shutter/wobble signature).
+
+    A measurement, not a defect: fast pans legitimately shear. Returns
+    inclusive frame intervals worth a human look.
+    """
+    from colorai.project.models import MediaAsset, Shot
+    from colorai.qc import detect_rolling_shutter as _detect
+
+    store = _open(project)
+    with store.session() as session:
+        shot = session.get(Shot, shot_id)
+        if shot is None:
+            raise ValueError("shot not found")
+        asset = session.get(MediaAsset, shot.asset_id)
+
+    runs = _detect(
+        asset.source_path, shot.start_frame, shot.end_frame, asset.frame_rate,
+        samples=samples,
+    )
+    return [{"start_frame": s, "end_frame": e} for s, e in runs]
+
+
+@mcp.tool()
+def transfer_gradeability(transfer: str | None) -> dict:
+    """Explain whether a master transfer can be graded in the BT.709 pipeline.
+
+    Untagged masters are assumed BT.709 and gradeable; PQ/HLG/log transfers
+    are refused rather than silently mis-graded, with an actionable reason.
+    """
+    from colorai.color import is_gradeable_transfer, non_gradeable_reason
+
+    gradeable = is_gradeable_transfer(transfer)
+    return {
+        "transfer": transfer,
+        "gradeable": gradeable,
+        "reason": None if gradeable else non_gradeable_reason(transfer),
+    }
+
+
+@mcp.tool()
 def generative_status() -> dict:
     """Report whether the generative restoration tier (RIFE + LaMa) is ready."""
     from colorai.generative import generative_models_status

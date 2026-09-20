@@ -175,14 +175,14 @@ def test_preview_correction(tmp_path):
     assert result.mean() == pytest.approx(expected * 255, abs=5)
 
 
-def test_preview_rejects_non_bt709_transfer(tmp_path):
+def test_preview_rejects_log_transfer(tmp_path):
     store = ProjectStore.create(":memory:")
-    project = store.create_project("hdr asset")
+    project = store.create_project("log asset")
     asset = store.add_asset(
         project.id,
-        source_path="/media/hdr.mov",
+        source_path="/media/log.mov",
         frame_rate=25.0,
-        transfer="smpte2084",  # PQ / HDR — not gradeable in the BT.709 working space
+        transfer="slog3",  # camera log — no known pair, never guessed
     )
     shot = make_shots(asset, [(0, 24)])[0]
     with store.session() as session:
@@ -196,5 +196,68 @@ def test_preview_rejects_non_bt709_transfer(tmp_path):
         session.add(make_representative_frame(shot, 0, image_path=str(still), frame_rate=25.0))
         session.commit()
 
-    with pytest.raises(ValueError, match="not yet gradeable"):
+    with pytest.raises(ValueError, match="never guessed"):
         preview_correction(store, shot, tmp_path / "preview.png")
+
+
+def test_apply_corrections_transfer_native_identity():
+    import numpy as np
+
+    from colorai.correction import apply_corrections
+
+    rng = np.random.default_rng(3)
+    pixels = rng.random((8, 10, 3))
+    for transfer in ("bt709", "pq", "hlg", None):
+        out = np.asarray(apply_corrections(pixels, [], transfer=transfer))
+        assert out == pytest.approx(pixels, abs=1e-6)
+
+
+def test_apply_corrections_pq_differs_from_bt709():
+    import numpy as np
+
+    from colorai.correction import apply_corrections
+
+    pixels = np.full((4, 4, 3), 0.5)
+    bt709 = np.asarray(apply_corrections(pixels, [("exposure", {"gain": 1.5})], transfer="bt709"))
+    pq = np.asarray(apply_corrections(pixels, [("exposure", {"gain": 1.5})], transfer="pq"))
+    assert not np.allclose(bt709, pq, atol=1e-6)  # different EOTFs, different grades
+    assert (pq > 0.5).all() and (bt709 > 0.5).all()  # both lift mid-gray
+
+
+def test_preview_grades_pq_asset(tmp_path):
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("pq asset")
+    asset = store.add_asset(
+        project.id, source_path="/media/pq.mov", frame_rate=25.0, transfer="smpte2084",
+    )
+    shot = make_shots(asset, [(0, 24)])[0]
+    with store.session() as session:
+        session.add(shot)
+        session.flush()
+        session.refresh(shot)
+        session.add(Correction(shot_id=shot.id, kind="exposure", parameters={"gain": 1.5}))
+
+    still = tmp_path / "still.png"
+    cv2.imwrite(str(still), np.full((8, 8, 3), [128, 128, 128], dtype=np.uint8))
+    with store.session() as session:
+        session.add(make_representative_frame(shot, 0, image_path=str(still), frame_rate=25.0))
+        session.commit()
+
+    out = preview_correction(store, shot, tmp_path / "preview.png")
+    assert out.exists()
+    assert cv2.imread(str(out)).mean() > 128  # lifted, transfer-natively
+
+
+def test_describe_correction_kinds():
+    from colorai.correction import describe_correction
+
+    assert describe_correction("exposure", {"gain": 2.0}) == "exposure 2.00× (+1.00 stops)"
+    assert describe_correction("offset", {"value": -0.02}) == "lift -0.020"
+    assert "R +10.0%" in describe_correction("rgb_balance", {"gain": [1.1, 1.0, 0.9]})
+    assert describe_correction("contrast", {"amount": 1.2, "pivot": 0.5}) == "contrast ×1.20 @ 0.50"
+    assert describe_correction("saturation", {"amount": 0.8}) == "saturation ×0.80"
+    assert describe_correction("hue_rotate", {"degrees": 15}) == "hue +15.0°"
+    assert describe_correction("cdl", {"slope": [1.1, 1.0, 1.0]}).startswith("CDL S[1.100")
+    assert describe_correction("curve", {"mode": "luma", "points": [[0, 0], [1, 1]]}) == "curve luma (2 pts)"
+    assert describe_correction("lut", {"path": "/l/look.cube", "space": "display"}) == "LUT look.cube [display]"
+    assert describe_correction("mystery", {"a": 1}).startswith("mystery")

@@ -24,6 +24,11 @@ preview pixel-for-pixel (modulo the encoder) at the cost of CPU/throughput —
 moving raw RGB through Python is slow for long 4K masters. Timing is preserved
 as CFR at the asset's exact frame rate; VFR retiming is a documented future
 optimization. GPU/ffmpeg-native acceleration is likewise future work.
+
+``jobs`` parallelizes the Python transform stage over a thread pool (the numpy
+/ OpenCV ops release the GIL, so this scales with cores on graded footage)
+while decode, encode, and frame order stay exactly as in the serial path —
+``jobs=1`` and ``jobs=N`` receive byte-identical encoder input.
 """
 
 from __future__ import annotations
@@ -33,8 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from colorai.color import is_gradeable_transfer
-from colorai.correction import apply_corrections
+from colorai.color import is_gradeable_transfer, normalize_transfer
 from colorai.project.models import Correction, MediaAsset, Shot
 from colorai.project.store import ProjectStore
 
@@ -48,6 +52,8 @@ _TAG_ALIASES = {
     "smpte170m": "smpte170m",
     "bt2020": "bt2020",
     "linear": "linear",
+    "pq": "smpte2084",
+    "hlg": "arib-std-b67",
 }
 
 
@@ -123,7 +129,9 @@ def shot_for_frame(frame_index: int, spans: list[ShotSpan]) -> int | None:
 
 
 def _tag(value: str | None) -> str:
-    return _TAG_ALIASES.get(value or "bt709", "bt709")
+    from colorai.color import normalize_transfer
+
+    return _TAG_ALIASES.get(normalize_transfer(value), "bt709")
 
 
 def _decoder_cmd(source: str) -> list[str]:
@@ -190,6 +198,26 @@ def _mux_with_source(video_path: str | Path, source: str, out_path: str | Path) 
     subprocess.run(cmd, check=True)
 
 
+def _transform_frame(
+    frame, frame_index: int, spans: list[ShotSpan], face_specs_by_shot: dict,
+    *, transfer: str | None = "bt709",
+):
+    """Apply one frame's whole-frame + face-local corrections (pure per frame)."""
+    import numpy as np
+
+    from colorai.correction import apply_corrections
+    from colorai.face_corrections import apply_face_corrections
+
+    corrections = corrections_for_frame(frame_index, spans)
+    if corrections:
+        frame = apply_corrections(frame, corrections, transfer=transfer)
+    shot_id = shot_for_frame(frame_index, spans)
+    face_specs = face_specs_by_shot.get(shot_id)
+    if face_specs:
+        frame = apply_face_corrections(frame, face_specs, frame_index)
+    return np.ascontiguousarray(frame).tobytes()
+
+
 def render_master(
     store: ProjectStore,
     asset_id: int,
@@ -199,14 +227,19 @@ def render_master(
     crf: int = 18,
     preset: str = "medium",
     pixel_format: str = "yuv420p",
+    jobs: int = 1,
     progress: Callable[[int, int], None] | None = None,
 ) -> Path:
     """Render ``asset_id`` to ``out_path`` with its approved corrections applied.
 
-    Raises ``ValueError`` for missing dimensions or a non-gradeable transfer,
-    ``RuntimeError`` on decoder/encoder failure or an incomplete decode, and
-    lets ``subprocess.CalledProcessError`` propagate if the mux pass fails.
+    Raises ``ValueError`` for missing dimensions, a non-gradeable transfer, or
+    ``jobs < 1``; ``RuntimeError`` on decoder/encoder failure or an incomplete
+    decode; and lets ``subprocess.CalledProcessError`` propagate if the mux
+    pass fails. ``jobs > 1`` threads the Python transform stage (same
+    transforms, same order — byte-identical encoder input).
     """
+    if jobs < 1:
+        raise ValueError("jobs must be >= 1")
     with store.session() as session:
         asset = session.get(MediaAsset, asset_id)
         if asset is None:
@@ -215,12 +248,11 @@ def render_master(
             raise ValueError(
                 f"asset {asset_id} has no probed dimensions; ingest it first"
             )
-        # Same guard as the preview: refuse to grade non-Rec.709 transfers.
+        # Same guard as the preview: refuse transfers without a known EOTF pair.
         if not is_gradeable_transfer(asset.transfer):
-            raise ValueError(
-                "grading is defined in BT.709, but this asset's transfer is "
-                f"{asset.transfer!r}; non-Rec.709 masters are not yet gradeable"
-            )
+            from colorai.color import non_gradeable_reason
+
+            raise ValueError(non_gradeable_reason(asset.transfer))
         width, height = asset.width, asset.height
         fps = asset.frame_rate
         source = asset.source_path
@@ -238,6 +270,14 @@ def render_master(
     )
 
     face_specs_by_shot = load_face_correction_specs_by_asset(store, asset_id)
+
+    # The face/skin compositor is BT.709-calibrated; whole-frame grades may be
+    # transfer-native, but face-local grades on PQ/HLG are refused outright.
+    if face_specs_by_shot and normalize_transfer(transfer) != "bt709":
+        raise ValueError(
+            "face-local corrections are calibrated in BT.709 and cannot render on "
+            f"a {transfer!r} master; disable them or deliver a Rec.709 mezzanine"
+        )
 
     frame_bytes = width * height * 3
     destination = Path(out_path)
@@ -261,40 +301,100 @@ def render_master(
 
     import numpy as np
 
+    def _read_frame():
+        raw = decoder.stdout.read(frame_bytes)
+        if not raw:
+            return None
+        if len(raw) != frame_bytes:
+            raise RuntimeError(
+                "decoder produced a partial frame — the source stream is "
+                "truncated or corrupt; refusing to emit an incomplete master"
+            )
+        return np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
+
     frame_index = 0
     total = expected_frames
-    try:
-        while True:
-            raw = decoder.stdout.read(frame_bytes)
-            if not raw:
-                break
-            if len(raw) != frame_bytes:
-                raise RuntimeError(
-                    "decoder produced a partial frame — the source stream is "
-                    "truncated or corrupt; refusing to emit an incomplete master"
+    if jobs == 1:
+        try:
+            while True:
+                frame = _read_frame()
+                if frame is None:
+                    break
+                encoder.stdin.write(
+                    _transform_frame(
+                        frame, frame_index, spans, face_specs_by_shot,
+                        transfer=transfer,
+                    )
                 )
-            frame = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3)
-            corrections = corrections_for_frame(frame_index, spans)
-            if corrections:
-                frame = apply_corrections(frame, corrections)
-            shot_id = shot_for_frame(frame_index, spans)
-            face_specs = face_specs_by_shot.get(shot_id)
-            if face_specs:
-                frame = apply_face_corrections(frame, face_specs, frame_index)
-            encoder.stdin.write(frame.tobytes())
-            frame_index += 1
-            if progress is not None:
-                progress(frame_index, total or 0)
-    finally:
-        if encoder.stdin is not None:
+                frame_index += 1
+                if progress is not None:
+                    progress(frame_index, total or 0)
+        finally:
+            if encoder.stdin is not None:
+                try:
+                    encoder.stdin.close()
+                except BrokenPipeError:
+                    pass
+            if decoder.stdout is not None:
+                decoder.stdout.close()
+            decoder.wait()
+            encoder.wait()
+    else:
+        from concurrent.futures import Future, ThreadPoolExecutor
+
+        window = jobs * 8
+        pending: dict[int, Future[bytes]] = {}
+        next_write = 0
+        worker_error: BaseException | None = None
+        try:
+            with ThreadPoolExecutor(max_workers=jobs) as pool:
+                while True:
+                    while len(pending) < window:
+                        frame = _read_frame()
+                        if frame is None:
+                            break
+                        pending[frame_index] = pool.submit(
+                            _transform_frame, frame.copy(),
+                            frame_index, spans, face_specs_by_shot,
+                            transfer=transfer,
+                        )
+                        frame_index += 1
+                    while next_write in pending and (
+                        len(pending) >= window or frame is None
+                    ):
+                        encoder.stdin.write(pending.pop(next_write).result())
+                        next_write += 1
+                        if progress is not None:
+                            progress(next_write, total or 0)
+                    if frame is None:
+                        break
+        except BaseException as exc:  # noqa: BLE001 — must kill the pipes first
+            worker_error = exc
+            for future in pending.values():
+                future.cancel()
+            decoder.kill()
             try:
-                encoder.stdin.close()
+                if encoder.stdin is not None:
+                    encoder.stdin.close()
             except BrokenPipeError:
                 pass
-        if decoder.stdout is not None:
-            decoder.stdout.close()
-        decoder.wait()
-        encoder.wait()
+            decoder.wait()
+            encoder.wait()
+            tmp_video.unlink(missing_ok=True)
+            if isinstance(worker_error, BrokenPipeError):
+                err = encoder.stderr.read().decode(errors="replace").strip()
+                raise RuntimeError(f"encoder failed: {err}") from worker_error
+            raise
+        else:
+            if encoder.stdin is not None:
+                try:
+                    encoder.stdin.close()
+                except BrokenPipeError:
+                    pass
+            if decoder.stdout is not None:
+                decoder.stdout.close()
+            decoder.wait()
+            encoder.wait()
 
     if decoder.returncode != 0:
         err = decoder.stderr.read().decode(errors="replace").strip()

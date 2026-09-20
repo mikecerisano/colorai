@@ -52,9 +52,16 @@ filmmaker always holding final approval.
   single-person shots (multi-person shots stay unassigned). Suggestions show
   source timecode + crop with Accept / Edit / Ignore, are **evidence, not
   identity truth**, and never overwrite a human-confirmed name.
-- **Temporal QC** — flicker, highlight/shadow measurements, and blank /
-  duplicate damaged-frame signatures, alongside blur-pulse detection — all
-  reported as *evidence, not defects* for comparing similar shots.
+- **Temporal QC** — flicker, highlight/shadow measurements, blank / duplicate
+  damaged-frame signatures, and rolling-shutter shear — alongside blur-pulse
+  detection — all reported as *evidence, not defects* for comparing similar shots.
+- **Review viewer** — fullscreen inspect lightbox with before/after wipe,
+  waveform + vectorscope, and keyboard shot-stepping; the Analysis tab shows
+  every proposal with its evidence and tunable sensitivity.
+- **Resolve interchange** — `colorai export` writes per-shot ASC CDL (exact
+  grades) or baked `.cube` LUTs plus CMX3600 EDL and FCP7 XML timelines.
+- **Transfer-native grading** — BT.709, PQ, and HLG masters grade in their own
+  transfer (no tone mapping, no guessing); camera log stays refused.
 - **Agent-ready (MCP)** — `colorai mcp` exposes the whole engine (including
   real image frames) to Claude Code / Codex / ChatGPT, with agent reasoning
   persisted as reviewable notes.
@@ -68,12 +75,19 @@ python3.12 -m venv .venv
 #                  ".[agent]"      -> MCP server for LLM/agent integration
 #                  ".[generative]" -> onnxruntime for the RIFE/LaMa restoration tier
 
-# Analyze a master end-to-end (ingest -> shots -> frames -> metrics -> skin)
+# Analyze a master, then review it — in one command
+.venv/bin/colorai open /path/to/master.mov
+# Per-master projects live under data/; re-running resumes from cache; --force
+# re-detects; --transfer pq|hlg declares the transfer when untagged (never guessed)
+
+# Or run the steps separately
 .venv/bin/colorai analyze /path/to/master.mov --project data/project.sqlite3
-# Re-analyzing the same unchanged master resumes from cache; --force re-detects
 
 # Render the master with approved shot corrections applied to a new file
-.venv/bin/colorai render --project data/project.sqlite3 --out /path/to/graded.mp4
+.venv/bin/colorai render --project data/project.sqlite3 --out /path/to/graded.mp4 --jobs 4
+
+# Export a Resolve interchange package (per-shot CDL/baked LUT + EDL + FCP7 XML)
+.venv/bin/colorai export --project data/project.sqlite3 --out-dir ./resolve
 
 # Start the local review UI (shots, subjects, notes, corrections, tracking)
 .venv/bin/colorai ui --project data/project.sqlite3 --port 8000
