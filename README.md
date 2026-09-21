@@ -2,7 +2,8 @@
 
 **Local-first AI finishing and color-QC assistant for professionally finished video.**
 
-ColorAI analyzes a baked Rec.709 master shot-by-shot, measures what's actually
+ColorAI analyzes a finished master shot-by-shot (Rec.709, PQ, or HLG —
+each graded transfer-natively, never guessed), measures what's actually
 there, and proposes **deterministic, temporally stable** corrections. It's
 built around one idea: the deterministic engine is the *body* (measure +
 execute), and an LLM/agent is the *brain* (judge + explain) — with the
@@ -12,11 +13,11 @@ filmmaker always holding final approval.
   correction is an explicit row in a local SQLite project database.
 - **Deterministic grading** — corrections are exposure / offset / RGB balance /
   ASC CDL / contrast / saturation / hue-rotate / tone curves / `.cube` LUTs,
-  never generative repainting of normal footage. Baked masters are decoded
-  with the **display-referred sRGB/BT.1886 EOTF**, graded in linear light, and
-  re-encoded once (stacked corrections compose in a single float pass); the
-  **BT.709 camera OETF** pair is provided separately for scene-linear
-  interchange.
+  never generative repainting of normal footage. Each master is decoded with
+  its own transfer's EOTF (BT.709 display-referred, PQ ST 2084, or HLG),
+  graded in linear light, and re-encoded once (stacked corrections compose in
+  a single float pass); the **BT.709 camera OETF** pair is provided separately
+  for scene-linear interchange.
 - **Identity-aware skin QC** — faces are grouped by a face-recognition
   embedding (not skin color), then matched *within each subject* so two people
   are never pulled toward each other.
@@ -25,8 +26,9 @@ filmmaker always holding final approval.
 - **Full-master export** — approved shot corrections render across the real
   frames to a new master (the same deterministic transforms the preview
   shows), with the source's audio, subtitles, chapters, metadata, and color
-  tags preserved; non-Rec.709 transfers, decoder failures, and incomplete
-  output are rejected rather than silently emitted.
+  tags preserved; transfers without a known EOTF pair (e.g. camera log),
+  decoder failures, and incomplete output are rejected rather than silently
+  emitted.
 - **Resumable + editable** — re-analysis is cached by source identity; manual
   split/merge, review/approval state, intentional-exception flags, and
   scene/camera-family grouping all survive a re-run. Pre-Alembic project
@@ -148,9 +150,9 @@ record reasoning.
 .venv/bin/python -m pytest
 ```
 
-471 tests, including exhaustive SMPTE drop-frame round-trips, real
+610 tests, including exhaustive SMPTE drop-frame round-trips, real
 ffmpeg-encoded fixtures, and end-to-end pipeline + MCP checks. Tests that need
-`ffmpeg` skip automatically when it's absent.
+`ffmpeg`/`tesseract`/`node` skip automatically when absent.
 
 ## License
 
