@@ -147,11 +147,11 @@
     </aside>
 
     <main class="main">
-      <div class="tabs">
-        <button type="button" class="tab active" id="tab-setups" onclick="showTab('setups')">Setups</button>
-        <button type="button" class="tab" id="tab-faces" onclick="showTab('faces')">Face review</button>
-        <button type="button" class="tab" id="tab-inbox" onclick="showTab('inbox')">Needs organization</button>
-        <button type="button" class="tab" id="tab-analysis" onclick="showTab('analysis')">Analysis</button>
+      <div class="tabs" role="tablist" aria-label="Review sections" id="review-tabs">
+        <button type="button" class="tab active" role="tab" aria-selected="true" id="tab-setups" onclick="showTab('setups')">Setups</button>
+        <button type="button" class="tab" role="tab" aria-selected="false" tabindex="-1" id="tab-faces" onclick="showTab('faces')">Face review</button>
+        <button type="button" class="tab" role="tab" aria-selected="false" tabindex="-1" id="tab-inbox" onclick="showTab('inbox')">Needs organization</button>
+        <button type="button" class="tab" role="tab" aria-selected="false" tabindex="-1" id="tab-analysis" onclick="showTab('analysis')">Analysis</button>
       </div>
 
       <!-- Setups workspace -->
@@ -226,7 +226,7 @@
           <div class="muted" style="margin-top:0.6rem">{{ direct|length }} shots{% if setup.camera %} · camera {{ setup.camera }}{% endif %}</div>
           <div class="filmstrip drop-target" data-drop-group="{{ setup.id }}" ondragover="allowShotDrop(event)" ondragleave="leaveShotDrop(event)" ondrop="dropShotInGroup(event, {{ setup.id }})">
             {% for s in direct %}
-            <div class="shot-thumb {% if setup.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}" data-shot-id="{{ s.id }}" data-reference-scope="{{ setup.id }}" data-subject-ids="{{ s.subject_ids|join(',') }}" draggable="true" ondragstart="startShotDrag(event, {{ s.id }})" onclick="selectReferenceShot({{ setup.id }}, {{ s.id }}, '{{ s.subject_ids|join(',') }}')">
+            <div class="shot-thumb {% if setup.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}" data-shot-id="{{ s.id }}" data-reference-scope="{{ setup.id }}" data-subject-ids="{{ s.subject_ids|join(',') }}" draggable="true" ondragstart="startShotDrag(event, {{ s.id }})" onclick="selectReferenceShot({{ setup.id }}, {{ s.id }}, '{{ s.subject_ids|join(',') }}')" tabindex="0" role="button" aria-label="select shot {{ s.index }} as reference" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
               <img src="/shots/{{ s.id }}/preview.png" data-preview src-orig="/shots/{{ s.id }}/original.png" alt="shot {{ s.index }}">
               <div class="meta">
                 shot {{ s.index }} · {{ s.start_tc }}
@@ -241,7 +241,7 @@
           <div class="variant-head">variant: {{ v.name }}{% if v.camera %} · camera {{ v.camera }}{% endif %}</div>
           <div class="filmstrip drop-target" data-drop-group="{{ v.id }}" ondragover="allowShotDrop(event)" ondragleave="leaveShotDrop(event)" ondrop="dropShotInGroup(event, {{ v.id }})">
             {% for s in ws.shots | selectattr('group_id','equalto',v.id) | list %}
-            <div class="shot-thumb {% if v.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}" data-shot-id="{{ s.id }}" data-reference-scope="{{ v.id }}" data-subject-ids="{{ s.subject_ids|join(',') }}" draggable="true" ondragstart="startShotDrag(event, {{ s.id }})" onclick="selectReferenceShot({{ v.id }}, {{ s.id }}, '{{ s.subject_ids|join(',') }}')">
+            <div class="shot-thumb {% if v.approved_reference_shot_id == s.id %}ref-shot{% endif %}" data-shot="{{ s.id }}" data-shot-id="{{ s.id }}" data-reference-scope="{{ v.id }}" data-subject-ids="{{ s.subject_ids|join(',') }}" draggable="true" ondragstart="startShotDrag(event, {{ s.id }})" onclick="selectReferenceShot({{ v.id }}, {{ s.id }}, '{{ s.subject_ids|join(',') }}')" tabindex="0" role="button" aria-label="select shot {{ s.index }} as reference" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
               <img src="/shots/{{ s.id }}/preview.png" data-preview src-orig="/shots/{{ s.id }}/original.png" alt="shot {{ s.index }}">
               <div class="meta">shot {{ s.index }} · {{ s.start_tc }}{% if s.corrections %} <span class="badge needs-review">proposed</span>{% endif %}</div>
             </div>
@@ -731,19 +731,19 @@
     </main>
   </div>
 
-  <div id="face-context-modal" class="modal hidden" onclick="closeFaceContext()">
+  <div id="face-context-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="face-context-title" onclick="closeFaceContext()">
     <div class="modal-card" onclick="event.stopPropagation()">
-      <div class="modal-head"><strong id="face-context-title"></strong><button type="button" onclick="closeFaceContext()">Close</button></div>
+      <div class="modal-head"><strong id="face-context-title"></strong><button type="button" id="fc-close" onclick="closeFaceContext()">Close</button></div>
       <img id="face-context-image" alt="marked source frame">
     </div>
   </div>
 
-  <div id="lightbox" class="modal hidden" onclick="closeLightbox()">
+  <div id="lightbox" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="lb-title" onclick="closeLightbox()">
     <div class="modal-card" onclick="event.stopPropagation()">
       <div class="modal-head">
         <strong id="lb-title">Shot</strong>
         <span class="muted" id="lb-count"></span>
-        <button type="button" onclick="closeLightbox()">Close</button>
+        <button type="button" id="lb-close" onclick="closeLightbox()">Close</button>
       </div>
       <div class="wipe-wrap">
         <img id="lb-after" alt="corrected still">
@@ -786,13 +786,25 @@
       location.reload();
     }
 
+    const TABS = ['setups','faces','inbox','analysis'];
     function showTab(name) {
-      ['setups','faces','inbox','analysis'].forEach(t => {
+      TABS.forEach(t => {
         document.getElementById('tab-'+t+'-pane').classList.toggle('hidden', t !== name);
-        document.getElementById('tab-'+t).classList.toggle('active', t === name);
+        const btn = document.getElementById('tab-'+t);
+        btn.classList.toggle('active', t === name);
+        btn.setAttribute('aria-selected', t === name ? 'true' : 'false');
+        btn.tabIndex = t === name ? 0 : -1;
       });
       rememberView({tab: name});
     }
+    document.getElementById('review-tabs').addEventListener('keydown', e => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      e.preventDefault();
+      const i = TABS.indexOf(document.activeElement.id.replace('tab-', ''));
+      const next = TABS[(i + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length];
+      document.getElementById('tab-' + next).focus();
+      showTab(next);
+    });
     function escapeHtml(s) {
       return String(s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     }
@@ -807,6 +819,7 @@
       return new URLSearchParams(q).toString();
     }
     async function runAnalysis() {
+      if (ASSET_ID === null) return;
       const r = await fetch(`/api/assets/${ASSET_ID}/outliers?` + analysisParams());
       const j = await r.json();
       const box = document.getElementById('analysis-results');
@@ -827,6 +840,7 @@
       }).join('');
     }
     async function applyAnalysis() {
+      if (ASSET_ID === null) return;
       await request(`/api/assets/${ASSET_ID}/apply-proposals?` + analysisParams(), 'POST');
       reloadPreservingView();
     }
@@ -844,13 +858,25 @@
       showTab('setups');
     }
 
+    let modalReturnFocus = null;
+    function trapFocus(container, e) {
+      const focusable = [...container.querySelectorAll('button, [href], input, select, [tabindex]:not([tabindex="-1"])')]
+        .filter(el => !el.disabled && el.offsetParent !== null);
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
     function openFaceContext(src, title) {
+      modalReturnFocus = document.activeElement;
       document.getElementById('face-context-image').src = src;
       document.getElementById('face-context-title').textContent = title;
       document.getElementById('face-context-modal').classList.remove('hidden');
+      document.getElementById('fc-close').focus();
     }
     function closeFaceContext() {
       document.getElementById('face-context-modal').classList.add('hidden');
+      if (modalReturnFocus && modalReturnFocus.focus) modalReturnFocus.focus();
     }
 
     // -- actions ------------------------------------------------------------
@@ -960,7 +986,9 @@
       return [...document.querySelectorAll('.shot-select:checked')].map(c => Number(c.value));
     }
     function updateSelected() {
-      document.getElementById('org-selected-count').textContent = selectedShotIds().length + ' selected';
+      const el = document.getElementById('org-selected-count');
+      if (!el) return;  // batch bar only renders when the queue is non-empty
+      el.textContent = selectedShotIds().length + ' selected';
     }
     async function organize(action, body) {
       if (ASSET_ID === null) return;
@@ -1058,9 +1086,9 @@
       const v = await res.json();
       const box = document.getElementById('plan-validation');
       if (box) {
-        const errors = (v.errors || []).map(e => `<div style="color:var(--amber)">${e}</div>`).join('');
-        const warnings = (v.warnings || []).map(w => `<div>${w}</div>`).join('');
-        box.innerHTML = errors || '<div class="muted">No blocking errors.</div>' + warnings;
+        const errors = (v.errors || []).map(e => `<div style="color:var(--amber)">${escapeHtml(e)}</div>`).join('');
+        const warnings = (v.warnings || []).map(w => `<div>${escapeHtml(w)}</div>`).join('');
+        box.innerHTML = errors ? errors + warnings : '<div class="muted">No blocking errors.</div>' + warnings;
         const btn = document.getElementById('apply-plan-btn');
         if (btn) btn.disabled = (v.errors || []).length > 0;
       }
@@ -1108,14 +1136,17 @@
 
     const LB = {shots: [], i: 0};
     function openLightbox(shotId, label) {
+      modalReturnFocus = document.activeElement;
       LB.shots = [...document.querySelectorAll('.shot-thumb[data-shot]')].map(el => Number(el.dataset.shot));
       LB.i = Math.max(0, LB.shots.indexOf(shotId));
       document.getElementById('lb-title').textContent = label || ('shot ' + shotId);
       document.getElementById('lightbox').classList.remove('hidden');
+      document.getElementById('lb-close').focus();
       lbShow();
     }
     function closeLightbox() {
       document.getElementById('lightbox').classList.add('hidden');
+      if (modalReturnFocus && modalReturnFocus.focus) modalReturnFocus.focus();
     }
     function lbSetWipe(pct) {
       document.getElementById('lb-wipe').value = pct;
@@ -1193,16 +1224,25 @@
       }));
     }
     document.addEventListener('keydown', e => {
-      if (document.getElementById('lightbox').classList.contains('hidden')) return;
-      if (e.target && e.target.tagName === 'INPUT' && e.key.startsWith('Arrow')) return;
-      if (e.key === 'Escape') closeLightbox();
-      else if (e.key === 'ArrowRight') lbStep(1);
-      else if (e.key === 'ArrowLeft') lbStep(-1);
-      else if (e.key === 'b' || e.key === 'B') lbToggleBefore();
-      else if (e.key === 'w' || e.key === 'W') {
-        const t = document.getElementById('lb-scopes-toggle');
-        t.checked = !t.checked;
-        lbScopesVisible();
+      const lb = document.getElementById('lightbox');
+      const fc = document.getElementById('face-context-modal');
+      if (!lb.classList.contains('hidden')) {
+        if (e.key === 'Tab') { trapFocus(lb, e); return; }
+        if (e.target && e.target.tagName === 'INPUT' && e.key.startsWith('Arrow')) return;
+        if (e.key === 'Escape') closeLightbox();
+        else if (e.key === 'ArrowRight') lbStep(1);
+        else if (e.key === 'ArrowLeft') lbStep(-1);
+        else if (e.key === 'b' || e.key === 'B') lbToggleBefore();
+        else if (e.key === 'w' || e.key === 'W') {
+          const t = document.getElementById('lb-scopes-toggle');
+          t.checked = !t.checked;
+          lbScopesVisible();
+        }
+        return;
+      }
+      if (!fc.classList.contains('hidden')) {
+        if (e.key === 'Escape') closeFaceContext();
+        else if (e.key === 'Tab') trapFocus(fc, e);
       }
     });
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -231,3 +232,93 @@ def test_index_shows_analysis_tab_and_summaries(tmp_path):
     assert "Shot consistency" in body
     assert "analysis-ref" in body
     assert "exposure 2.00× (+1.00 stops)" in body
+
+
+def test_plan_validation_errors_are_escaped(tmp_path):
+    stills_dir = tmp_path / "stills"
+    stills_dir.mkdir()
+    store = ProjectStore.create(":memory:")
+    _stills_base, _rel = _build_reviewable_project(store, stills_dir)
+
+    body = TestClient(create_app(store, str(stills_dir))).get("/").text
+    assert "escapeHtml(e)" in body
+    assert "escapeHtml(w)" in body
+
+
+def test_export_rejects_uncapped_lut_size(tmp_path):
+    stills_dir = tmp_path / "stills"
+    stills_dir.mkdir()
+    store = ProjectStore.create(":memory:")
+    _stills_base, _rel = _build_reviewable_project(store, stills_dir)
+    with store.session() as session:
+        from colorai.project.models import Shot
+
+        asset_id = session.query(Shot).order_by(Shot.index).first().asset_id
+
+    client = TestClient(create_app(store, str(stills_dir)))
+    assert client.post(f"/api/assets/{asset_id}/export", json={"lut_size": 1000}).status_code == 422
+    assert client.post(f"/api/assets/{asset_id}/export", json={"lut_size": 1}).status_code == 422
+
+
+def test_template_guards_missing_elements(tmp_path):
+    stills_dir = tmp_path / "stills"
+    stills_dir.mkdir()
+    store = ProjectStore.create(":memory:")
+    _stills_base, _rel = _build_reviewable_project(store, stills_dir)
+
+    body = TestClient(create_app(store, str(stills_dir))).get("/").text
+    assert "if (!el) return;" in body
+    assert "if (ASSET_ID === null) return;" in body
+
+
+def test_inline_js_parses(tmp_path):
+    """The review template's inline JS must stay syntactically valid.
+
+    Jinja tags are stripped before parsing, so this guards JS syntax only.
+    """
+    import re
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+
+    from colorai import ui as _ui
+
+    html = (Path(_ui.__file__).parent / "templates" / "index.html").read_text()
+    scripts = re.findall(r"<script>(.*?)</script>", html, re.DOTALL)
+    assert scripts
+    js = "\n;\n".join(scripts)
+    js = re.sub(r"{%.*?%}", "", js, flags=re.DOTALL)
+    js = re.sub(r"{{.*?}}", "0", js, flags=re.DOTALL)
+    candidate = tmp_path / "inline.js"
+    candidate.write_text(js)
+    subprocess.run([node, "--check", str(candidate)], check=True,
+                   capture_output=True, text=True)
+
+
+def test_template_keyboard_and_dialog_semantics(tmp_path):
+    from colorai.project.models import ShotGroup
+
+    stills_dir = tmp_path / "stills"
+    stills_dir.mkdir()
+    store = ProjectStore.create(":memory:")
+    _stills_base, _rel = _build_reviewable_project(store, stills_dir)
+    with store.session() as session:
+        from colorai.project.models import Shot
+
+        shot = session.query(Shot).order_by(Shot.index).first()
+        group = ShotGroup(asset_id=shot.asset_id, name="interview", kind="setup")
+        session.add(group)
+        session.flush()
+        shot.group_id = group.id
+        session.commit()
+
+    body = TestClient(create_app(store, str(stills_dir))).get("/").text
+    assert 'role="dialog"' in body
+    assert 'aria-modal="true"' in body
+    assert 'role="tablist"' in body
+    assert 'aria-selected=' in body
+    assert 'role="button"' in body and 'tabindex="0"' in body
+    assert "trapFocus" in body

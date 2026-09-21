@@ -43,6 +43,10 @@ from colorai.project.store import ProjectStore
 #: Correction kinds that fold exactly into one ASC CDL SOP triple.
 _SOP_EXACT_KINDS = ("cdl", "exposure", "offset", "rgb_balance")
 
+#: Upper bound for baked LUT lattices: the lattice holds ``size**3`` pixels,
+#: so 64 (262k) is generous and anything larger is a hung export, not a grade.
+MAX_LUT_SIZE = 64
+
 
 def _vec3(value: Any, default: tuple[float, float, float]) -> tuple[float, float, float]:
     if value is None:
@@ -179,8 +183,8 @@ def bake_cube_text(
     on smooth grades; where the grade clips to black/white the kink is
     smoothed over about one node span (bounded, never a different grade).
     """
-    if size < 2:
-        raise ValueError("lut size must be >= 2")
+    if size < 2 or size > MAX_LUT_SIZE:
+        raise ValueError(f"lut size must be in [2, {MAX_LUT_SIZE}]")
     grid = np.linspace(0.0, 1.0, size, dtype=np.float64)
     lattice = np.empty((size * size, size, 3), dtype=np.float64)
     for b in range(size):

@@ -146,3 +146,27 @@ def test_analyze_and_open_accept_transfer():
     assert parser.parse_args(["analyze", "/m.mov"]).transfer is None
     assert parser.parse_args(["analyze", "/m.mov", "--transfer", "pq"]).transfer == "pq"
     assert parser.parse_args(["open", "/m.mov", "--transfer", "hlg"]).transfer == "hlg"
+
+
+def test_export_rejects_uncapped_lut_size(tmp_path):
+    from colorai.project import ProjectStore, make_shots
+
+    db = tmp_path / "project.sqlite3"
+    store = ProjectStore.create(db)
+    project = store.create_project("film")
+    asset = store.add_asset(project.id, source_path="/media/m.mov", frame_rate=25.0)
+    with store.session() as session:
+        session.add_all(make_shots(asset, [(0, 24)]))
+        session.commit()
+
+    out_dir = tmp_path / "resolve"
+    assert main(["export", "--project", str(db), "--out-dir", str(out_dir), "--lut-size", "1000"]) == 1
+    assert not out_dir.exists()
+
+
+def test_main_reports_errors_without_traceback(tmp_path, capsys):
+    assert main(["analyze", "/media/does-not-exist.mov",
+                 "--project", str(tmp_path / "p.sqlite3")]) == 1
+    out = capsys.readouterr().out
+    assert out.startswith("error:")
+    assert "Traceback" not in out

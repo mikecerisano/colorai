@@ -194,3 +194,24 @@ def test_match_shot_to_reference(tmp_path):
     exposure = next(c for c in dev.corrections if c.kind == "exposure")
     # reference luma is 128/255, shot luma is 0.25.
     assert exposure.parameters["gain"] == pytest.approx((128 / 255) / 0.25, abs=1e-3)
+
+
+def test_load_shot_features_uses_first_metrics_row():
+    from colorai.analysis import load_shot_features
+
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("features")
+    asset = store.add_asset(project.id, source_path="/media/m.mov", frame_rate=25.0)
+    shots = make_shots(asset, [(0, 24)])
+    with store.session() as session:
+        session.add_all(shots)
+        session.flush()
+        for s in shots:
+            session.refresh(s)
+        session.add(FrameMetrics(shot_id=shots[0].id, frame_index=0, luma_mean=0.5))
+        session.add(FrameMetrics(shot_id=shots[0].id, frame_index=12, luma_mean=0.9))
+        session.commit()
+
+    features = load_shot_features(store, asset.id)
+    assert len(features) == 1
+    assert features[0].luma_mean == pytest.approx(0.5)  # first row by id, not latest

@@ -137,3 +137,10 @@ def test_html_renders_skin_matching_actions(tmp_path):
     assert "candidate face" in body
     assert "corrected" in body
     assert "show box" in body
+
+
+def test_skin_matching_unknown_group_is_404(tmp_path):
+    client, store, asset, shots, alice, group, metrics = _client(tmp_path)
+    r = client.get(f"/api/assets/{asset.id}/skin-matching/9999")
+    assert r.status_code == 404
+    assert r.json() == {"detail": "group not found"}

@@ -271,3 +271,23 @@ def test_session_rolls_back_on_error(store):
             session.add(Project(name="doomed"))
             raise RuntimeError("boom")
     assert store.list_projects() == []
+
+
+def test_file_store_uses_wal_and_busy_timeout(tmp_path):
+    import sqlite3
+
+    from sqlalchemy import text
+
+    from colorai.project import ProjectStore
+
+    db = tmp_path / "project.sqlite3"
+    store = ProjectStore.create(db)
+    # journal_mode persists in the file: any reader sees WAL.
+    conn = sqlite3.connect(db)
+    try:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        conn.close()
+    # busy_timeout is per-connection: the store's own connections carry it.
+    with store.engine.connect() as session_conn:
+        assert session_conn.execute(text("PRAGMA busy_timeout")).fetchone()[0] == 10000

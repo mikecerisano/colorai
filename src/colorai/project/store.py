@@ -41,9 +41,25 @@ def _sqlite_engine(path: str | Path) -> Engine:
 def _enable_foreign_keys(engine: Engine) -> None:
     @event.listens_for(engine, "connect")
     def _set_sqlite_pragma(dbapi_conn, _record):  # noqa: ANN001
+        # WAL mode lets the review UI (long-lived writer) coexist with CLI
+        # invocations instead of failing fast with "database is locked";
+        # busy_timeout bounds the wait instead of blocking forever.
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=10000")
         cursor.close()
+
+
+def _connect_once(engine: Engine) -> None:
+    """Open and close one connection so connect listeners apply eagerly.
+
+    Engines are lazy: without this, WAL/busy_timeout would only take effect
+    after the first real session, leaving a window where concurrent writers
+    fail with "database is locked".
+    """
+    with engine.connect():
+        pass
 
 
 def _legacy_chain(inspector) -> list[tuple[str, bool]]:
@@ -197,6 +213,7 @@ class ProjectStore:
         _migrate(db_path)
         engine = _sqlite_engine(db_path)
         _enable_foreign_keys(engine)
+        _connect_once(engine)
         return cls(engine)
 
     @classmethod
@@ -206,6 +223,7 @@ class ProjectStore:
         _migrate(db_path)
         engine = _sqlite_engine(db_path)
         _enable_foreign_keys(engine)
+        _connect_once(engine)
         return cls(engine)
 
     # -- transactions ---------------------------------------------------------

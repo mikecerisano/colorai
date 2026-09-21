@@ -175,3 +175,16 @@ def test_ocr_lines_runs_real_backend():
     # still prove the CLI + TSV path ran without error.
     combined = " ".join(l["text"] for l in lines).upper()
     assert "HELLO" in combined or lines == []
+
+
+def test_parse_tsv_skips_corrupt_rows():
+    tsv = (
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+        "5\t1\t1\t1\t1\t1\t10\t20\t50\t20\t95\tJANE\n"
+        "5\t1\t1\t1\t1\t2\tx\t20\t50\t20\t95\tGARBAGE-BOX\n"
+        "5\t1\t?\t1\t1\t3\t10\t20\t50\t20\t95\tGARBAGE-KEY\n"
+        "5\t1\t1\t1\t1\t4\t70\t20\t50\t20\tnot-a-number\tDOE\n"
+        "5\t1\t1\t1\t1\t5\t70\t20\t50\t20\t\tBLANK-CONF\n"
+    )
+    lines = _parse_tsv(tsv)
+    assert [l["text"] for l in lines] == ["JANE DOE BLANK-CONF"]

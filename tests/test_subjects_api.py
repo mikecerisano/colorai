@@ -110,3 +110,31 @@ def test_notes(tmp_path):
 def test_track_unknown_shot_404(tmp_path):
     client, asset, shots, a = _client(tmp_path)
     assert client.get("/api/shots/9999/track").status_code == 404
+
+
+def test_list_subjects_timecodes_are_asset_scoped(tmp_path):
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("film")
+    asset = store.add_asset(project.id, source_path="/media/m.mov", frame_rate=25.0)
+    other = store.add_asset(project.id, source_path="/media/other.mov", frame_rate=25.0)
+    shots = make_shots(asset, [(0, 24)])
+    other_shots = make_shots(other, [(0, 49)])
+    with store.session() as session:
+        session.add_all(shots + other_shots)
+        session.flush()
+        for s in shots + other_shots:
+            session.refresh(s)
+    a = _create_subject(store, asset.id, "Alice")
+    with store.session() as session:
+        session.add(
+            SkinMetric(
+                shot_id=shots[0].id, face_index=0,
+                mean_b=0.35, mean_g=0.38, mean_r=0.58,
+                sample_pixels=100, subject_id=a.id,
+            )
+        )
+        session.commit()
+
+    client = TestClient(create_app(store, tmp_path / "stills"))
+    faces = client.get(f"/api/assets/{asset.id}/subjects").json()[0]["faces"]
+    assert faces[0]["timecode"] == shots[0].start_timecode

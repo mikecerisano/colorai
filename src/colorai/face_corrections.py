@@ -762,8 +762,6 @@ def load_face_correction_specs(
     persisted track/mask and compositing code. Raises ``ValidationError`` for
     any invalid enabled correction (render preflight).
     """
-    from colorai.project.models import FaceMaskTrack, FaceTrack
-
     with store.session() as session:
         rows = (
             session.query(FaceCorrection)
@@ -771,42 +769,49 @@ def load_face_correction_specs(
             .order_by(FaceCorrection.id)
             .all()
         )
-        specs: list[FaceCorrectionSpec] = []
-        for c in rows:
-            _validate_face_correction_row(session, c)
-            track = session.get(FaceTrack, c.face_track_id)
-            keyframes = tuple(tuple(k) for k in (track.keyframes or []))
-            if c.kind == "skin_appearance":
-                # Render from the *exact* reviewed mask persisted on the row,
-                # never the latest mask for the face track.
-                mask = session.get(FaceMaskTrack, c.mask_track_id)
-                parameters = dict(c.parameters or {})
-                parameters["mask_strategy"] = mask.strategy
-                specs.append(
-                    FaceCorrectionSpec(
-                        id=c.id,
-                        kind=c.kind,
-                        parameters=parameters,
-                        keyframes=keyframes,
-                        mask_geometry_keyframes=tuple(
-                            (int(k[0]), k[1]) for k in (mask.landmark_keyframes or [])
-                        ),
-                        source_width=track.source_width,
-                        source_height=track.source_height,
-                    )
+        return _specs_for_rows(session, rows)
+
+
+def _specs_for_rows(session, rows: list) -> list[FaceCorrectionSpec]:
+    """Validate rows and build compositor specs (shared single-shot/bulk path)."""
+    from colorai.project.models import FaceMaskTrack, FaceTrack
+
+    specs: list[FaceCorrectionSpec] = []
+    for c in rows:
+        _validate_face_correction_row(session, c)
+        track = session.get(FaceTrack, c.face_track_id)
+        keyframes = tuple(tuple(k) for k in (track.keyframes or []))
+        if c.kind == "skin_appearance":
+            # Render from the *exact* reviewed mask persisted on the row,
+            # never the latest mask for the face track.
+            mask = session.get(FaceMaskTrack, c.mask_track_id)
+            parameters = dict(c.parameters or {})
+            parameters["mask_strategy"] = mask.strategy
+            specs.append(
+                FaceCorrectionSpec(
+                    id=c.id,
+                    kind=c.kind,
+                    parameters=parameters,
+                    keyframes=keyframes,
+                    mask_geometry_keyframes=tuple(
+                        (int(k[0]), k[1]) for k in (mask.landmark_keyframes or [])
+                    ),
+                    source_width=track.source_width,
+                    source_height=track.source_height,
                 )
-            else:
-                gain = tuple(float(v) for v in c.parameters["gain"])
-                specs.append(
-                    FaceCorrectionSpec(
-                        id=c.id,
-                        gain=gain,
-                        keyframes=keyframes,
-                        source_width=track.source_width,
-                        source_height=track.source_height,
-                    )
+            )
+        else:
+            gain = tuple(float(v) for v in c.parameters["gain"])
+            specs.append(
+                FaceCorrectionSpec(
+                    id=c.id,
+                    gain=gain,
+                    keyframes=keyframes,
+                    source_width=track.source_width,
+                    source_height=track.source_height,
                 )
-        return specs
+            )
+    return specs
 
 
 def load_face_correction_specs_by_asset(
@@ -815,17 +820,31 @@ def load_face_correction_specs_by_asset(
     """Map every shot of an asset to its enabled face-correction specs.
 
     Validates every enabled correction (raises ``ValidationError``) so render
-    can abort before producing any output on an invalid grade.
+    can abort before producing any output on an invalid grade. One session
+    for the whole asset — not one per shot.
     """
     from colorai.project.models import Shot
 
     with store.session() as session:
-        shot_ids = [
+        shot_ids = {
             s.id for s in session.query(Shot).filter_by(asset_id=asset_id).all()
-        ]
-    result: dict[int, list[FaceCorrectionSpec]] = {}
-    for sid in shot_ids:
-        specs = load_face_correction_specs(store, sid)
-        if specs:
-            result[sid] = specs
-    return result
+        }
+        if not shot_ids:
+            return {}
+        rows = (
+            session.query(FaceCorrection)
+            .filter(
+                FaceCorrection.shot_id.in_(shot_ids),
+                FaceCorrection.enabled.is_(True),
+            )
+            .order_by(FaceCorrection.shot_id, FaceCorrection.id)
+            .all()
+        )
+        by_shot: dict[int, list] = {}
+        for c in rows:
+            by_shot.setdefault(c.shot_id, []).append(c)
+        return {
+            sid: specs
+            for sid, specs in ((s, _specs_for_rows(session, r)) for s, r in by_shot.items())
+            if specs
+        }

@@ -152,3 +152,69 @@ def test_ingest_declared_transfer_rejects_log(sample_video):
     project = store.create_project("declared bad")
     with pytest.raises(ValueError, match="never guessed"):
         ingest_media(store, project.id, sample_video, transfer="slog3")
+
+
+def test_parse_rate_rejects_sentinels():
+    from colorai.media.probe import _parse_rate
+
+    assert _parse_rate("30000/1001") == pytest.approx(30000 / 1001, abs=1e-9)
+    assert _parse_rate("25") == 25.0
+    for bad in ("0/0", "N/A", "", "  ", "abc", "25/0"):
+        with pytest.raises(ValueError, match="unparseable frame rate"):
+            _parse_rate(bad)
+
+
+def test_probe_media_tolerates_na_fields(monkeypatch):
+    import json
+
+    import colorai.media.probe as probe_mod
+
+    payload = {
+        "streams": [{
+            "codec_type": "video",
+            "width": 1920,
+            "height": 1080,
+            "avg_frame_rate": "0/0",
+            "r_frame_rate": "25/1",
+            "nb_frames": "N/A",
+            "pix_fmt": "yuv420p",
+        }],
+        "format": {"duration": "N/A", "size": "N/A"},
+    }
+
+    class _Result:
+        stdout = json.dumps(payload)
+
+    monkeypatch.setattr(
+        probe_mod, "subprocess",
+        type("Sub", (), {"run": staticmethod(lambda *a, **k: _Result())})(),
+    )
+    probe = probe_mod.probe_media("/media/odd.mov")
+    assert probe.frame_rate == 25.0  # fell back from 0/0 to r_frame_rate
+    assert probe.frame_count is None
+    assert probe.duration_seconds is None
+    assert probe.file_size_bytes is None
+
+
+def test_probe_media_rejects_unusable_rate_and_garbage(monkeypatch):
+    import colorai.media.probe as probe_mod
+
+    class _Result:
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    bad_rate = {"streams": [{"codec_type": "video", "avg_frame_rate": "N/A"}], "format": {}}
+    monkeypatch.setattr(
+        probe_mod, "subprocess",
+        type("Sub", (), {"run": staticmethod(lambda *a, **k: _Result(""))})(),
+    )
+    with pytest.raises(ValueError, match="unparseable output"):
+        probe_mod.probe_media("/media/empty.mov")
+
+    monkeypatch.setattr(
+        probe_mod, "subprocess",
+        type("Sub", (), {"run": staticmethod(
+            lambda *a, **k: _Result(__import__("json").dumps(bad_rate)))})(),
+    )
+    with pytest.raises(ValueError, match="no usable frame rate"):
+        probe_mod.probe_media("/media/norate.mov")

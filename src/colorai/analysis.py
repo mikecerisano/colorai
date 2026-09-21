@@ -82,15 +82,21 @@ def load_shot_features(
         shots = (
             session.query(Shot).filter_by(asset_id=asset_id).order_by(Shot.index).all()
         )
+        shot_ids = [s.id for s in shots if not (skip_excused and s.excused)]
+        first_metrics: dict[int, FrameMetrics] = {}
+        if shot_ids:
+            rows = (
+                session.query(FrameMetrics)
+                .filter(FrameMetrics.shot_id.in_(shot_ids))
+                .order_by(FrameMetrics.shot_id, FrameMetrics.id)
+                .all()
+            )
+            for m in rows:
+                first_metrics.setdefault(m.shot_id, m)
         for shot in shots:
             if skip_excused and shot.excused:
                 continue
-            metrics = (
-                session.query(FrameMetrics)
-                .filter_by(shot_id=shot.id)
-                .order_by(FrameMetrics.id)
-                .first()
-            )
+            metrics = first_metrics.get(shot.id)
             if metrics is None or metrics.luma_mean is None:
                 continue
             features.append(

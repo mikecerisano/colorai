@@ -54,25 +54,46 @@ def ocr_status() -> dict:
     return {"tesseract": tesseract_path(), "available": ocr_available()}
 
 
+def _parse_int(value: str) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_tsv(tsv: str) -> list[dict]:
-    """Parse Tesseract TSV output into per-line ``{text, confidence, box}``."""
-    words: dict[tuple[str, str, str], list[tuple[str, str, int, int, int, int]]] = {}
+    """Parse Tesseract TSV output into per-line ``{text, confidence, box}``.
+
+    Corrupt rows (non-numeric boxes/keys) are skipped, not fatal: one bad
+    OCR row must not kill the whole suggestion pipeline.
+    """
+    words: dict[tuple[int, int, int], list[tuple[str, str, int, int, int, int]]] = {}
     for row in tsv.splitlines():
         cols = row.split("\t")
         if len(cols) < 12 or cols[0] != "5":  # word-level rows only
             continue
-        block, par, line = cols[2], cols[3], cols[4]
-        left, top, width, height = (int(cols[6]), int(cols[7]), int(cols[8]), int(cols[9]))
+        key = (_parse_int(cols[2]), _parse_int(cols[3]), _parse_int(cols[4]))
+        box = tuple(_parse_int(c) for c in cols[6:10])
+        if any(v is None for v in key) or any(v is None for v in box):
+            continue
         conf, text = cols[10], cols[11].strip()
         if not text:
             continue
-        words.setdefault((block, par, line), []).append((text, conf, left, top, width, height))
+        left, top, width, height = box
+        words.setdefault(key, []).append((text, conf, left, top, width, height))
 
     lines: list[dict] = []
-    for key in sorted(words, key=lambda k: (int(k[0]), int(k[1]), int(k[2]))):
+    for key in sorted(words):
         group = words[key]
         text = " ".join(w[0] for w in group)
-        confs = [float(w[1]) for w in group if w[1] not in ("-1", "")]
+        confs = []
+        for w in group:
+            if w[1] in ("-1", ""):
+                continue
+            try:
+                confs.append(float(w[1]))
+            except (TypeError, ValueError):
+                continue
         confidence = (sum(confs) / len(confs)) / 100.0 if confs else 0.0
         xs = [w[2] for w in group]
         ys = [w[3] for w in group]
@@ -101,9 +122,13 @@ def _run_tesseract_tsv(image_path: str | Path, lang: str = "eng") -> str:
 
 def ocr_lines(image_bgr: np.ndarray, *, lang: str = "eng") -> list[dict]:
     """OCR an HxWx3 BGR image into per-line ``{text, confidence, box}``."""
+    import os
+
     fd, tmp = tempfile.mkstemp(suffix=".png")
     try:
-        cv2.imwrite(tmp, image_bgr)
+        os.close(fd)
+        if not cv2.imwrite(tmp, image_bgr):
+            raise RuntimeError("failed to write OCR input image")
         return _parse_tsv(_run_tesseract_tsv(tmp, lang))
     finally:
         Path(tmp).unlink(missing_ok=True)

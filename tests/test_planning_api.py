@@ -121,3 +121,22 @@ def test_apply_failure_rolls_back_via_api(tmp_path):
     with store.session() as session:
         for s in session.query(Shot).filter_by(asset_id=asset.id).all():
             assert s.group_id is None and s.excused is False
+
+
+def test_organization_draft_absent_is_404(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from colorai.project import ProjectStore, make_shots
+    from colorai.ui import create_app
+
+    store = ProjectStore.create(":memory:")
+    project = store.create_project("film")
+    asset = store.add_asset(project.id, source_path="/media/m.mov", frame_rate=25.0)
+    with store.session() as session:
+        session.add_all(make_shots(asset, [(0, 24)]))
+        session.commit()
+
+    client = TestClient(create_app(store, tmp_path / "stills"))
+    r = client.get(f"/api/assets/{asset.id}/organization-draft")
+    assert r.status_code == 404
+    assert r.json() == {"detail": "no active draft"}

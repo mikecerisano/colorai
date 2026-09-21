@@ -729,7 +729,12 @@ def list_reference_proposals(project: str, asset_id: int) -> list[dict]:
 
 @mcp.tool()
 def approve_reference(project: str, proposal_id: int) -> dict:
-    """Human approval of a reference proposal (makes it the effective reference)."""
+    """Record the filmmaker's explicit approval of a reference proposal.
+
+    Agentic use only at the human's direct request in-session: approval is a
+    human decision (it makes the proposal the effective reference), never an
+    autonomous agent judgment. Nothing applies automatically on propose.
+    """
     from colorai.references import approve_reference as _approve
 
     p = _approve(_open(project), proposal_id)
@@ -738,6 +743,10 @@ def approve_reference(project: str, proposal_id: int) -> dict:
 
 @mcp.tool()
 def reject_reference(project: str, proposal_id: int) -> dict:
+    """Record the filmmaker's explicit rejection of a reference proposal.
+
+    Agentic use only at the human's direct request in-session, like approval.
+    """
     from colorai.references import reject_reference as _reject
 
     p = _reject(_open(project), proposal_id)

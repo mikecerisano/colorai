@@ -149,3 +149,14 @@ def test_extract_representative_frames(hardcut_video, tmp_path):
     assert [f.frame_index for f in frames] == [24, 74]
     assert [f.timecode for f in frames] == ["00:00:00:24", "00:00:02:24"]
     assert all(f.image_path and Path(f.image_path).exists() for f in frames)
+
+
+def test_extract_frame_rejects_bad_scale(tmp_path):
+    from colorai.frames import extract_frame
+
+    with pytest.raises(ValueError, match="positive integer"):
+        extract_frame("/media/m.mov", 0, tmp_path / "x.png", scale=0)
+    with pytest.raises(ValueError, match="positive integer"):
+        extract_frame("/media/m.mov", 0, tmp_path / "x.png", scale="640")
+    with pytest.raises(ValueError, match="positive integer"):
+        extract_frame("/media/m.mov", 0, tmp_path / "x.png", scale=True)

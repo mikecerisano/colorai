@@ -210,3 +210,12 @@ def test_export_package_grades_pq_transfer_natively(tmp_path):
     assert (out / "shot_000.cdl").exists()  # exact SOP path is transfer-agnostic
     cube_text = (out / "shot_001.cube").read_text()
     assert "smpte2084" in cube_text  # baked LUT is labeled transfer-native
+
+
+def test_bake_rejects_lattice_beyond_cap():
+    from colorai.interchange import MAX_LUT_SIZE, bake_cube_text
+
+    with pytest.raises(ValueError, match=r"in \[2, 64\]"):
+        bake_cube_text([("exposure", {"gain": 1.1})], size=MAX_LUT_SIZE + 1)
+    with pytest.raises(ValueError, match=r"in \[2, 64\]"):
+        bake_cube_text([("exposure", {"gain": 1.1})], size=1)

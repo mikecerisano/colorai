@@ -54,11 +54,40 @@ class MediaProbe:
 
 
 def _parse_rate(rate: str) -> float:
-    """Parse an ffprobe rational like ``"30000/1001"`` or ``"25/1"``."""
-    num, sep, den = rate.partition("/")
-    if not sep or not den:
-        return float(num)
-    return float(Fraction(int(num), int(den)))
+    """Parse an ffprobe rational like ``"30000/1001"`` or ``"25/1"``.
+
+    Raises ``ValueError`` for anything unparseable — including ffprobe's
+    ``"0/0"`` and ``"N/A"`` sentinels for unknown rates — so callers can fall
+    back to the next rate source instead of crashing deeper in the pipeline.
+    """
+    text = (rate or "").strip()
+    num, sep, den = text.partition("/")
+    try:
+        if not sep or not den:
+            return float(num)
+        return float(Fraction(int(num), int(den)))
+    except (ValueError, ZeroDivisionError) as exc:
+        raise ValueError(f"unparseable frame rate: {rate!r}") from exc
+
+
+def _int_or_none(value: Any) -> int | None:
+    """``int(value)`` with ffprobe's ``"N/A"``/missing sentinels mapping to ``None``."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    """``float(value)`` with ffprobe's ``"N/A"``/missing sentinels mapping to ``None``."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def probe_media(path: str | Path) -> MediaProbe:
@@ -83,37 +112,51 @@ def probe_media(path: str | Path) -> MediaProbe:
         text=True,
         check=True,
     )
-    data = json.loads(result.stdout)
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"ffprobe returned unparseable output for {src!r}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"ffprobe returned unexpected output for {src!r}")
+    streams = data.get("streams", [])
+    if not isinstance(streams, list):
+        raise ValueError(f"ffprobe returned unexpected streams for {src!r}")
 
     video = next(
-        (s for s in data.get("streams", []) if s.get("codec_type") == "video"),
+        (s for s in streams if isinstance(s, dict) and s.get("codec_type") == "video"),
         None,
     )
     if video is None:
         raise ValueError(f"no video stream found in {src!r}")
 
     fmt = data.get("format", {})
-    duration = fmt.get("duration")
-    size = fmt.get("size")
+    if not isinstance(fmt, dict):
+        fmt = {}
+    duration = _float_or_none(fmt.get("duration"))
+    size = _int_or_none(fmt.get("size"))
 
-    frame_rate = _parse_rate(video.get("avg_frame_rate", video.get("r_frame_rate", "0/1")))
+    frame_rate = None
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        try:
+            frame_rate = _parse_rate(video.get(key, ""))
+            break
+        except ValueError:
+            continue
+    if frame_rate is None:
+        raise ValueError(f"no usable frame rate reported for {src!r}")
 
-    nb_frames = video.get("nb_frames")
-    if nb_frames is not None:
-        frame_count = int(nb_frames)
-    elif duration is not None:
-        frame_count = round(float(duration) * frame_rate)
-    else:
-        frame_count = None
+    frame_count = _int_or_none(video.get("nb_frames"))
+    if frame_count is None and duration is not None:
+        frame_count = round(duration * frame_rate)
 
     return MediaProbe(
         source_path=src,
-        file_size_bytes=int(size) if size is not None else None,
+        file_size_bytes=size,
         width=video.get("width"),
         height=video.get("height"),
         frame_rate=frame_rate,
         frame_count=frame_count,
-        duration_seconds=float(duration) if duration is not None else None,
+        duration_seconds=duration,
         pixel_format=video.get("pix_fmt"),
         color_space=normalize_color_space(video.get("color_space")),
         transfer=normalize_transfer(video.get("color_transfer")),

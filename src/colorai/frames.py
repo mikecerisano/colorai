@@ -67,6 +67,8 @@ def extract_frame(
 
     ``out_path`` extension determines the still format (e.g. ``.png``).
     """
+    if scale is not None and (isinstance(scale, bool) or not isinstance(scale, int) or scale <= 0):
+        raise ValueError("scale must be a positive integer width")
     destination = Path(out_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     vf = f"scale={scale}:-2" if scale else None

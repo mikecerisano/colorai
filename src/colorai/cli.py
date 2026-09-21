@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_open = sub.add_parser(
         "open",
-        help="Analyze a master and open it in the review UI (one command).",
+        help="Analyze a master and open it in the review UI (one command, loopback-only, no auth).",
     )
     p_open.add_argument("master", help="Path to the baked Rec.709 master.")
     p_open.add_argument(
@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_ui = sub.add_parser(
         "ui",
-        help="Start the local review UI.",
+        help="Start the local review UI (loopback-only, no auth — do not expose beyond localhost).",
     )
     p_ui.add_argument(
         "--project", default="data/project.sqlite3", help="Project database path."
@@ -250,6 +250,11 @@ def _run_export(args: argparse.Namespace) -> int:
         asset_id = asset.id
 
     print(f"exporting asset {asset_id} -> {args.out_dir}")
+    from colorai.interchange import MAX_LUT_SIZE
+
+    if not 2 <= args.lut_size <= MAX_LUT_SIZE:
+        print(f"error: --lut-size must be in [2, {MAX_LUT_SIZE}]")
+        return 1
     try:
         manifest = export_package(store, asset_id, args.out_dir, lut_size=args.lut_size)
     except ValueError as exc:
@@ -286,27 +291,41 @@ def _run_mcp(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    import logging
+
+    logging.basicConfig(level=logging.WARNING)
+    logger = logging.getLogger("colorai")
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help()
         return 0
-    if args.command == "analyze":
-        return _run_analyze(args)
-    if args.command == "open":
-        return _run_open(args)
-    if args.command == "ui":
-        return _run_ui(args)
-    if args.command == "render":
-        return _run_render(args)
-    if args.command == "export":
-        return _run_export(args)
-    if args.command == "db" and args.db_command == "migrate":
-        return _run_db_migrate(args)
-    if args.command == "mcp":
-        return _run_mcp(args)
-    print(f"error: 'colorai {args.command}' is not implemented yet")
-    return 1
+    try:
+        if args.command == "analyze":
+            return _run_analyze(args)
+        if args.command == "open":
+            return _run_open(args)
+        if args.command == "ui":
+            return _run_ui(args)
+        if args.command == "render":
+            return _run_render(args)
+        if args.command == "export":
+            return _run_export(args)
+        if args.command == "db" and args.db_command == "migrate":
+            return _run_db_migrate(args)
+        if args.command == "mcp":
+            return _run_mcp(args)
+        print(f"error: 'colorai {args.command}' is not implemented yet")
+        return 1
+    except KeyboardInterrupt:
+        print("interrupted")
+        return 130
+    except BrokenPipeError:
+        return 1
+    except Exception as exc:  # noqa: BLE001 — CLI boundary: report, don't dump
+        logger.exception("command failed")
+        print(f"error: {exc}")
+        return 1
 
 
 if __name__ == "__main__":

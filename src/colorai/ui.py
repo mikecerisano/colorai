@@ -26,7 +26,7 @@ import cv2
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 
 from colorai.correction import (
@@ -646,7 +646,8 @@ class CorrectionUpdate(BaseModel):
 
 
 class ExportIn(BaseModel):
-    lut_size: int = 33
+    # Upper bound mirrors interchange.MAX_LUT_SIZE (the lattice holds size**3).
+    lut_size: int = Field(default=33, ge=2, le=64)
 
 
 class SubjectIn(BaseModel):
@@ -929,6 +930,16 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
             if session.get(MediaAsset, asset_id) is None:
                 raise HTTPException(status_code=404, detail="asset not found")
             groups = _list(store, asset_id)
+            members = (
+                session.query(Shot)
+                .filter_by(asset_id=asset_id)
+                .order_by(Shot.index)
+                .all()
+            )
+            shot_ids_by_group: dict[int, list[int]] = {}
+            for s in members:
+                if s.group_id is not None:
+                    shot_ids_by_group.setdefault(s.group_id, []).append(s.id)
             return [
                 {
                     "id": g.id,
@@ -936,9 +947,7 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
                     "kind": g.kind,
                     "camera": g.camera,
                     "parent_id": g.parent_id,
-                    "shot_ids": [
-                        s.id for s in session.query(Shot).filter_by(group_id=g.id).order_by(Shot.index).all()
-                    ],
+                    "shot_ids": shot_ids_by_group.get(g.id, []),
                 }
                 for g in groups
             ]
@@ -1109,7 +1118,7 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
     def organization_draft_endpoint(asset_id: int):
         draft = _workspace(store, asset_id).get("organization_draft")
         if draft is None:
-            return {"error": "no active draft"}
+            raise HTTPException(status_code=404, detail="no active draft")
         return draft
 
     @app.patch("/api/plans/{plan_id}/items/{shot_id}")
@@ -1205,7 +1214,7 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
         for s in _workspace(store, asset_id)["setups"]:
             if s["id"] == group_id:
                 return s["skin_matching"]
-        return {"error": "group not found"}
+        raise HTTPException(status_code=404, detail="group not found")
 
     @app.post("/api/face-corrections/{correction_id}/approve")
     def approve_face_correction_endpoint(correction_id: int):
@@ -1550,14 +1559,13 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
 
     # -- subjects, notes, tracking -------------------------------------------
 
-    def _subject_dict(session, subject: Subject) -> dict:
+    def _subject_dict(session, subject: Subject, timecodes: dict[int, str]) -> dict:
         faces = (
             session.query(SkinMetric)
             .filter_by(subject_id=subject.id)
             .order_by(SkinMetric.shot_id, SkinMetric.face_index)
             .all()
         )
-        timecodes = {s.id: s.start_timecode for s in session.query(Shot).all()}
         return {
             "id": subject.id,
             "name": subject.name,
@@ -1586,7 +1594,11 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
                 .order_by(Subject.id)
                 .all()
             )
-            return [_subject_dict(session, s) for s in subjects]
+            timecodes = {
+                s.id: s.start_timecode
+                for s in session.query(Shot).filter_by(asset_id=asset_id).all()
+            }
+            return [_subject_dict(session, s, timecodes) for s in subjects]
 
     @app.post("/api/assets/{asset_id}/subjects", status_code=201)
     def create_subject(asset_id: int, payload: SubjectIn):
@@ -1762,6 +1774,15 @@ def create_app(store: ProjectStore, stills_dir: str | Path) -> FastAPI:
                 raise HTTPException(status_code=500, detail="cannot read still")
         else:
             raise HTTPException(status_code=400, detail="source must be 'corrected' or 'original'")
+        # Scopes measure distributions, not pixels: cap the working size so a
+        # 4K still doesn't cost a full-frame histogram per click.
+        h, w = image.shape[:2]
+        longest = max(h, w)
+        if longest > 768:
+            image = cv2.resize(
+                image, (round(w * 768 / longest), round(h * 768 / longest)),
+                interpolation=cv2.INTER_AREA,
+            )
         return {
             "shot_id": shot_id,
             "source": source,
