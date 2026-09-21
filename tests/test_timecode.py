@@ -174,6 +174,18 @@ def test_df_2997_roundtrip_100k():
         assert timecode_to_frames(tc, 29.97) == f
 
 
+def test_df_roundtrip_long_range_both_rates():
+    # Regression: the DF inverse divided label space by the frame-space block
+    # size and broke past frame ~1.8M (first bad frame 1814366 at 29.97).
+    for fps in (29.97, 59.94):
+        for f in range(1814360, 1814375):
+            tc = frames_to_timecode(f, fps)
+            assert timecode_to_frames(tc, fps) == f
+        for f in range(0, 3_000_000, 997):
+            tc = frames_to_timecode(f, fps)
+            assert timecode_to_frames(tc, fps) == f
+
+
 # ---------------------------------------------------------------------------
 # Rate-class inference: 29.97/59.94 are DF, integer 30/60 are NDF
 # ---------------------------------------------------------------------------

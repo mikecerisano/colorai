@@ -1848,11 +1848,14 @@ def generate_name_suggestions(project: str, asset_id: int) -> dict:
 
 @mcp.tool()
 def analyze_master(
-    project: str, master: str, project_name: str | None = None, resume: bool = True
+    project: str, master: str, project_name: str | None = None, resume: bool = True,
+    transfer: str | None = None,
 ) -> dict:
     """Run the full pipeline on a master and persist results.
 
     ``resume=True`` reuses a previous analysis when the master is unchanged.
+    ``transfer`` declares the master's transfer (BT.709/PQ/HLG) when the
+    container leaves it untagged — validated, never inferred.
     """
     from colorai.pipeline import analyze_master as run_analysis
 
@@ -1865,7 +1868,8 @@ def analyze_master(
         project_id = store.create_project(project_name or Path(master).stem).id
 
     result = run_analysis(
-        store, project_id, master, stills_dir=path.parent / "stills", resume=resume
+        store, project_id, master, stills_dir=path.parent / "stills",
+        resume=resume, transfer=transfer,
     )
     return {
         "asset_id": result.asset.id,

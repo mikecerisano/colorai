@@ -373,3 +373,42 @@ def test_detect_rolling_shutter_tool(tmp_path, monkeypatch):
     assert runs == [{"start_frame": 0, "end_frame": 3}]
     with pytest.raises(ValueError, match="shot not found"):
         mcp_server.detect_rolling_shutter(db, 9999)
+
+
+def test_analyze_master_declares_transfer():
+    import inspect
+
+    sig = inspect.signature(mcp_server.analyze_master)
+    assert sig.parameters["transfer"].default is None
+
+
+@pytest.mark.skipif(
+    __import__("shutil").which("ffmpeg") is None, reason="ffmpeg not available"
+)
+def test_analyze_master_transfer_end_to_end(tmp_path):
+    import subprocess
+
+    clip = tmp_path / "master.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-v", "error",
+            "-f", "lavfi", "-t", "1", "-i", "color=c=black:size=32x32:rate=25",
+            "-f", "lavfi", "-t", "1", "-i", "color=c=white:size=32x32:rate=25",
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0,format=yuv420p",
+            "-c:v", "mpeg4", "-y", str(clip),
+        ],
+        check=True,
+    )
+    db = tmp_path / "project.sqlite3"
+    result = mcp_server.analyze_master(str(db), str(clip), transfer="pq")
+    assert result["shots"] >= 1
+
+    from colorai.project import ProjectStore
+    from colorai.project.models import MediaAsset
+
+    with ProjectStore.open(db).session() as session:
+        asset = session.get(MediaAsset, result["asset_id"])
+        assert asset.transfer == "pq"
+
+    with pytest.raises(ValueError, match="never guessed"):
+        mcp_server.analyze_master(str(db), str(clip), transfer="slog3", resume=False)

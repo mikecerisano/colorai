@@ -1,6 +1,6 @@
 # Status
 
-Current progress. 610 tests passing.
+Current progress. 613 tests passing.
 
 ## Done
 
@@ -301,7 +301,7 @@ Current progress. 610 tests passing.
 
 - `colorai analyze` runs end-to-end on a real encoded master (shots, stills,
   metrics, DB rows all confirmed).
-- 610 tests across timecode, project model, migrations (incl. legacy
+- 613 tests across timecode, project model, migrations (incl. legacy
   bootstrap), ingest (incl. declared transfer), shot detection, frames,
   metrics, pipeline, correction (incl. transfer-native grade + summaries),
   LUT/curve, render (incl. threaded parity + PQ tags), resumability,

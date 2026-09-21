@@ -162,29 +162,27 @@ def _tc_df_to_frames(total_labels: int, fps_r: int, drop: int) -> int:
     """Inverse of :func:`_frames_to_tc_df` (labels -> real frame count).
 
     ``total_labels`` is the naive count of SMPTE labels from ``00:00:00;00``,
-    i.e. it includes the dropped labels as if they existed. Each 10-minute
-    block is ``fps_r * 60 * 10 - drop * 9`` labels long; within a block the
-    dropped labels are ``drop`` consecutive labels at the start of every
-    minute except the first (minute 0 of the block, a multiple of 10, never
-    drops).
+    i.e. it includes the dropped labels as if they existed. Label space is
+    uniform: every 10-minute block spans exactly ``fps_r * 600`` labels, and
+    within a block the ``k``-th drop group (``k = 1..9``) skips the ``drop``
+    labels ``fps_r * 60 * k .. fps_r * 60 * k + drop - 1`` — the first minute
+    of the block (a multiple of 10) never drops.
 
-    In label space, the ``k``-th drop group of a block sits at
-    ``fps_r * 60 * k + drop * 9 * d`` (``d`` = block index), so the number of
-    drop groups that precede the label at block offset ``m`` is
-    ``(m - drop * 9 * d - 1) // (fps_r * 60)``.
+    So the drop groups strictly preceding block offset ``m`` are the ``k >= 1``
+    with ``fps_r * 60 * k + drop <= m``: none while ``m < fps_r * 60 + drop``,
+    otherwise ``(m - drop) // (fps_r * 60)`` of them. (Labels inside a skipped
+    group are invalid DF timecode; they map leniently rather than raising.)
     """
-    frames_per_min = fps_r * 60 - drop
-    frames_per_10min = frames_per_min * 9 + fps_r * 60
+    labels_per_10min = fps_r * 600
     dropped_per_block = drop * 9
 
-    d = total_labels // frames_per_10min
-    m = total_labels % frames_per_10min
+    d = total_labels // labels_per_10min
+    m = total_labels % labels_per_10min
 
-    # First minute of a 10-minute block is a non-drop minute.
-    if m < fps_r * 60 + dropped_per_block * d:
+    if m < fps_r * 60 + drop:
         groups = 0
     else:
-        groups = (m - dropped_per_block * d - 1) // (fps_r * 60)
+        groups = (m - drop) // (fps_r * 60)
 
     return total_labels - dropped_per_block * d - drop * groups
 
